@@ -76,25 +76,114 @@ export function getCursorInterpolationBlend(animationStyle = 'default') {
   }
 }
 
-function getCursorAnimationEaseWeight(animationStyle = 'default') {
-  switch (animationStyle) {
-    case 'molasses':
-      return 1
-    case 'gentle':
-      return 0.88
-    case 'default':
-      return 0.72
-    case 'stiff':
-    default:
-      return 0
+function getCursorTemporalEaseWeight() {
+  return 0
+}
+
+function getVectorMagnitude(vector) {
+  return Math.hypot(vector?.x ?? 0, vector?.y ?? 0)
+}
+
+function buildCursorSegmentVector(fromPoint, toPoint) {
+  if (!fromPoint || !toPoint) {
+    return { x: 0, y: 0 }
   }
+
+  return {
+    x: (toPoint.x ?? 0) - (fromPoint.x ?? 0),
+    y: (toPoint.y ?? 0) - (fromPoint.y ?? 0),
+  }
+}
+
+function getCursorTurnWeight(leftVector, rightVector) {
+  const leftMagnitude = getVectorMagnitude(leftVector)
+  const rightMagnitude = getVectorMagnitude(rightVector)
+
+  if (leftMagnitude < 0.0005 || rightMagnitude < 0.0005) {
+    return 1
+  }
+
+  const dotProduct = leftVector.x * rightVector.x + leftVector.y * rightVector.y
+  const normalizedDot = clampNumber(dotProduct / (leftMagnitude * rightMagnitude), -1, 1)
+  const turnAngleDegrees = (Math.acos(normalizedDot) * 180) / Math.PI
+
+  if (turnAngleDegrees <= 18) {
+    return 1
+  }
+
+  if (turnAngleDegrees >= 92) {
+    return 0.08
+  }
+
+  const turnProgress = clampUnit((turnAngleDegrees - 18) / (92 - 18))
+  return 1 - turnProgress * 0.92
+}
+
+function getCursorSegmentTravelWeight(previousPoint, nextPoint) {
+  const segmentVector = buildCursorSegmentVector(previousPoint, nextPoint)
+  const segmentDistance = getVectorMagnitude(segmentVector)
+
+  if (segmentDistance <= 0.01) {
+    return 1
+  }
+
+  if (segmentDistance >= 0.16) {
+    return 0.22
+  }
+
+  const distanceProgress = clampUnit((segmentDistance - 0.01) / (0.16 - 0.01))
+  return 1 - distanceProgress * 0.78
+}
+
+function getCursorSegmentDurationWeight(previousPoint, nextPoint) {
+  const spanSeconds = Math.max(0.001, (nextPoint?.timeSeconds ?? 0) - (previousPoint?.timeSeconds ?? 0))
+
+  if (spanSeconds <= 0.024) {
+    return 1
+  }
+
+  if (spanSeconds >= 0.12) {
+    return 0.3
+  }
+
+  const durationProgress = clampUnit((spanSeconds - 0.024) / (0.12 - 0.024))
+  return 1 - durationProgress * 0.7
+}
+
+function getAdaptiveCursorInterpolationBlend(points, rightIndex, animationStyle = 'default') {
+  const baseBlend = getCursorInterpolationBlend(animationStyle)
+
+  if (baseBlend <= 0.001 || !Array.isArray(points) || points.length < 3) {
+    return baseBlend
+  }
+
+  const previousPoint = points[Math.max(0, rightIndex - 1)]
+  const nextPoint = points[rightIndex] ?? points[points.length - 1]
+
+  if (!previousPoint || !nextPoint) {
+    return baseBlend
+  }
+
+  const beforePoint = points[Math.max(0, rightIndex - 2)] ?? previousPoint
+  const afterPoint = points[Math.min(points.length - 1, rightIndex + 1)] ?? nextPoint
+  const incomingVector = buildCursorSegmentVector(beforePoint, previousPoint)
+  const currentVector = buildCursorSegmentVector(previousPoint, nextPoint)
+  const outgoingVector = buildCursorSegmentVector(nextPoint, afterPoint)
+  const turnWeight = Math.min(
+    getCursorTurnWeight(incomingVector, currentVector),
+    getCursorTurnWeight(currentVector, outgoingVector),
+  )
+  const travelWeight = getCursorSegmentTravelWeight(previousPoint, nextPoint)
+  const durationWeight = getCursorSegmentDurationWeight(previousPoint, nextPoint)
+
+  return baseBlend * turnWeight * travelWeight * durationWeight
 }
 
 export function getCursorInterpolationProgress(previousTimeSeconds, nextTimeSeconds, targetTime, animationStyle = 'default') {
   const span = Math.max(0.001, nextTimeSeconds - previousTimeSeconds)
   const rawRatio = clampUnit((targetTime - previousTimeSeconds) / span)
   const smoothstepRatio = rawRatio * rawRatio * (3 - 2 * rawRatio)
-  const easeWeight = getCursorAnimationEaseWeight(animationStyle)
+  const easeWeight = getCursorTemporalEaseWeight(animationStyle)
 
   return {
     rawRatio,
@@ -259,7 +348,7 @@ export function getCursorPointAtTime(points, timeSeconds, options = {}) {
       ratio,
       previousPoint,
       nextPoint,
-      interpolationBlend: getCursorInterpolationBlend(animationStyle),
+      interpolationBlend: getAdaptiveCursorInterpolationBlend(points, rightIndex, animationStyle),
     })
   }
 
