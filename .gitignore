@@ -1,0 +1,53 @@
+# Dependencies and build output
+/node_modules/
+/dist/
+/dist-ssr/
+
+# Local runtime artifacts
+/output/
+/runtime-tools/
+/captures/
+/exports/
+/projects/
+/imports/
+/smoke-start.err.log
+/smoke-start.out.log
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+.npmrc
+
+# Local media and scratch files
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.flac
+*.aac
+*.m4a
+*.pcm
+
+# OS / editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
