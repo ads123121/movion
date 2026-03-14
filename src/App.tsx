@@ -6588,8 +6588,8 @@ function App() {
       setImportSummary(summary)
       setStatusLine(
         summary.detected
-          ? `Canvid state detected. ${summary.projectCount} project file(s), ${summary.presetCount} preset file(s).`
-          : 'Canvid installation state not detected on this machine.',
+          ? `Legacy install detected. ${summary.projectCount} project file(s), ${summary.presetCount} preset file(s).`
+          : 'No compatible legacy install was detected on this machine.',
       )
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Import scan failed')
@@ -6598,7 +6598,7 @@ function App() {
     }
   }
 
-  const importCurrentCanvidState = async () => {
+  const importLegacyState = async () => {
     setIsImporting(true)
     setErrorMessage('')
 
@@ -6606,7 +6606,7 @@ function App() {
       const imported = await window.forkApi.importState.run()
       setImportSummary(imported.summary)
       setSettings(imported.settings)
-      setStatusLine('Current Canvid runtime state was copied into the Movion workspace.')
+      setStatusLine('Legacy state was copied into the Movion workspace.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Import failed')
     } finally {
@@ -10709,18 +10709,18 @@ function App() {
           <div className="panel panel-import">
             <div className="panel-heading">
               <p className="panel-kicker">Import State</p>
-              <h2>Canvid runtime scan</h2>
+              <h2>Legacy import scan</h2>
             </div>
             <p className="panel-copy">
-              Detect current Canvid install, count project and preset files, and copy available
-              state into this fork workspace without depending on the original app.
+              Detect a compatible previous install, count project and preset files, and copy
+              available state into the Movion workspace without depending on the original app.
             </p>
 
             <div className="panel-actions">
               <button type="button" onClick={scanImportState} disabled={isScanningImport}>
                 {isScanningImport ? 'Scanning...' : 'Scan current setup'}
               </button>
-              <button type="button" onClick={importCurrentCanvidState} disabled={isImporting}>
+              <button type="button" onClick={importLegacyState} disabled={isImporting}>
                 {isImporting ? 'Importing...' : 'Import local state'}
               </button>
             </div>
@@ -10731,8 +10731,8 @@ function App() {
                 <dd>{importSummary?.detected ? 'Yes' : 'No'}</dd>
               </div>
               <div>
-                <dt>Version</dt>
-                <dd>{importSummary?.canvidVersion || 'Unknown'}</dd>
+                <dt>Source version</dt>
+                <dd>{importSummary?.sourceVersion || 'Unknown'}</dd>
               </div>
               <div>
                 <dt>Projects</dt>
@@ -12525,7 +12525,7 @@ function App() {
               <strong>{boot.paths.exportsRoot}</strong>
             </div>
             <div className="detail-block">
-              <span>Imported Canvid state</span>
+              <span>Imported legacy state</span>
               <strong>{boot.paths.importsRoot}</strong>
             </div>
           </div>
@@ -12549,7 +12549,7 @@ function App() {
           </button>
 
           <div className="studio-file-meta">
-            <strong>*{project.title}.canvid</strong>
+            <strong>*{project.title}.movion</strong>
             <span>{project.clips.length} clip(s) · {enabledTimelineItemCount} live item(s) · {formatDuration(totalClipDuration)}</span>
           </div>
 
@@ -12621,14 +12621,14 @@ function App() {
                 }}
                 disabled={isScanningImport}
               >
-                <strong>Generate Logs</strong>
-                <span>{isScanningImport ? 'Scanning...' : 'Inspect current setup'}</span>
+                <strong>Scan Legacy Import</strong>
+                <span>{isScanningImport ? 'Scanning...' : 'Inspect previous install'}</span>
               </button>
             </div>
           ) : null}
         </div>
 
-        <div className="studio-logo">CANVID</div>
+        <div className="studio-logo">MOVION</div>
 
         <div className="studio-header-right">
           <button type="button" className="upgrade-pill">
@@ -12736,7 +12736,7 @@ function App() {
                       ) : (
                         <>
                           <strong>Bring an image file into the frame</strong>
-                          <span>PNG, JPG, JPEG, or WEBP. The file stays local inside your fork workspace.</span>
+                          <span>PNG, JPG, JPEG, or WEBP. The file stays local inside your Movion workspace.</span>
                         </>
                       )}
                       <div className="image-upload-actions">
@@ -13446,7 +13446,7 @@ function App() {
                         <div className="support-note">
                           <strong>Manual zoom editing</strong>
                           <span>
-                            Add a zoom block at the playhead, then tune its timing and focus target. These blocks render as blue regions on the motion lane, like the reference Canvid workflow.
+                            Add a zoom block at the playhead, then tune its timing and focus target. These blocks render as blue regions on the motion lane for precise manual timing.
                           </span>
                         </div>
                       )}

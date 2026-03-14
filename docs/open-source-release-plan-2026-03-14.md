@@ -28,7 +28,7 @@ Main reasons:
 ### Branding and positioning
 
 - repo name and README still need to avoid any legacy fork framing
-- README explicitly references Canvid runtime folders and import paths
+- README explicitly references older runtime folders and import paths
 - the project should be presented as an independent product with compatibility import support, not as a branded fork
 
 ### Repo cleanliness
@@ -47,12 +47,12 @@ Main reasons:
 
 ## 1. Publish an independent open source core
 
-Open source the product as a standalone project, not as "Canvid, but public".
+Open source the product as a standalone project, not as a renamed public clone of an earlier proprietary app.
 
 Recommended structure:
 
 - `core app`: capture, editor, cursor system, motion zoom, export
-- `compat import`: optional importer for Canvid state
+- `compat import`: optional importer for previous-install local state
 - `ai integrations`: optional provider-backed features, starting with OpenAI transcription
 
 This keeps the core honest:
@@ -71,8 +71,8 @@ Recommended:
 - new repository name
 - new app name in README and package metadata
 - keep migration/import support, but move it under compatibility language such as:
-  - `Import from Canvid`
-  - `Canvid migration support`
+  - `Import from previous install`
+  - `Legacy migration support`
 
 Avoid:
 

@@ -9,7 +9,7 @@ Work only from:
 Do not initialize or publish from:
 
 - `<workspace>`
-- `<workspace>/canvid-local-fork`
+- `<workspace>/legacy-source-repo`
 
 ## Before first push
 

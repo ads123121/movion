@@ -2,7 +2,7 @@
 
 ## Goal
 
-Bring the local Canvid fork to a state where the four most visible features behave as one coherent system:
+Bring the inherited codebase to a state where the four most visible features behave as one coherent system:
 
 - Motion Zoom Effect
 - Cursor overlay

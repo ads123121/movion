@@ -9,7 +9,7 @@ It focuses on four things:
 - readable click emphasis
 - export parity with preview
 
-Movion is an independent project. It can import data from Canvid-compatible local folders, but it is not published as a branded fork.
+Movion is an independent project. It can optionally import data from earlier compatible local installs, but it is not positioned as a rebranded fork.
 
 ## Status
 
@@ -91,15 +91,13 @@ By default, the app can still be used without OpenAI.
 - `docs/`
   Internal architecture and release planning notes.
 
-## Import compatibility
+## Migration support
 
-Movion includes compatibility import paths for existing local Canvid data. This is for migration support only.
+Movion includes an optional legacy import flow for projects, presets, and window state from earlier compatible local installs.
 
-Current compatibility sources:
+See:
 
-- `%LOCALAPPDATA%/Canvid`
-- `%USERPROFILE%/Videos/Canvid/Projects`
-- `%USERPROFILE%/Videos/Canvid/Presets`
+- [MIGRATION.md](./MIGRATION.md)
 
 ## Project docs
 
@@ -111,7 +109,7 @@ Current compatibility sources:
 
 ## Open source hygiene
 
-Before contributing or publishing forks:
+Before contributing or publishing derivative builds:
 
 - do not commit personal recordings
 - do not commit exports, logs, or generated runtime files

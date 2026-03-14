@@ -292,7 +292,7 @@ const defaultSettings = {
   importState: {
     lastScannedAt: '',
     lastImportedAt: '',
-    canvidVersion: '',
+    sourceVersion: '',
     presetCount: 0,
     projectCount: 0,
     hasWindowState: false,
@@ -304,6 +304,14 @@ const defaultSettings = {
 }
 
 function mergeSettings(current, patch) {
+  const nextImportStatePatch = patch.importState
+    ? {
+        ...patch.importState,
+        sourceVersion:
+          patch.importState.sourceVersion ?? patch.importState.canvidVersion ?? current.importState.sourceVersion,
+      }
+    : {}
+
   return {
     ...current,
     ...patch,
@@ -313,7 +321,7 @@ function mergeSettings(current, patch) {
     },
     importState: {
       ...current.importState,
-      ...(patch.importState ?? {}),
+      ...nextImportStatePatch,
     },
     output: {
       ...current.output,
@@ -340,7 +348,9 @@ function getFfmpegCandidates() {
 
   return [
     managedCandidate,
+    process.env.MOVION_LOCAL_FFMPEG,
     process.env.CANVID_LOCAL_FFMPEG,
+    path.join(localAppData, 'Programs', 'Movion', 'resources', 'binaries', 'win', 'ffmpeg', 'ffmpeg.exe'),
     path.join(localAppData, 'Programs', 'Canvid', 'resources', 'binaries', 'win', 'ffmpeg', 'ffmpeg.exe'),
     path.join(programFiles, 'Krita (x64)', 'bin', 'ffmpeg.exe'),
     path.join(
@@ -365,8 +375,10 @@ function getFfprobeCandidates() {
 
   return [
     managedCandidate,
+    process.env.MOVION_LOCAL_FFPROBE,
     process.env.CANVID_LOCAL_FFPROBE,
     ffmpegSibling,
+    path.join(localAppData, 'Programs', 'Movion', 'resources', 'binaries', 'win', 'ffmpeg', 'ffprobe.exe'),
     path.join(localAppData, 'Programs', 'Canvid', 'resources', 'binaries', 'win', 'ffmpeg', 'ffprobe.exe'),
     'ffprobe.exe',
   ].filter(Boolean)
@@ -374,7 +386,7 @@ function getFfprobeCandidates() {
 
 function getPaths() {
   const localAppData = process.env.LOCALAPPDATA ?? app.getPath('home')
-  const currentCanvidRoot = path.join(localAppData, 'Canvid')
+  const legacyImportRoot = path.join(localAppData, 'Canvid')
   const forkVideosRoot = path.join(app.getPath('videos'), defaultSettings.output.capturesRootName)
   const runtimeToolsRoot = path.join(app.getPath('userData'), 'runtime-tools')
   const ffmpegRuntimeRoot = path.join(runtimeToolsRoot, 'ffmpeg')
@@ -395,12 +407,12 @@ function getPaths() {
     importsRoot: path.join(forkVideosRoot, 'Imports'),
     activeProjectPointerFile: path.join(forkVideosRoot, 'Projects', 'active-project-pointer.json'),
     activeProjectFile: path.join(forkVideosRoot, 'Projects', 'active-project.json'),
-    currentCanvidRoot,
-    currentCanvidWindowState: path.join(currentCanvidRoot, 'window-state.json'),
-    currentCanvidPartition: path.join(currentCanvidRoot, 'Partitions', 'canvid'),
-    currentCanvidPackageJson: path.join(currentCanvidRoot, 'package.json'),
-    currentCanvidProjects: path.join(app.getPath('videos'), 'Canvid', 'Projects'),
-    currentCanvidPresets: path.join(app.getPath('videos'), 'Canvid', 'Presets'),
+    legacyImportRoot,
+    legacyWindowState: path.join(legacyImportRoot, 'window-state.json'),
+    legacyPartition: path.join(legacyImportRoot, 'Partitions', 'canvid'),
+    legacyPackageJson: path.join(legacyImportRoot, 'package.json'),
+    legacyProjects: path.join(app.getPath('videos'), 'Canvid', 'Projects'),
+    legacyPresets: path.join(app.getPath('videos'), 'Canvid', 'Presets'),
   }
 }
 
@@ -2467,40 +2479,40 @@ async function countFiles(rootPath) {
   return counts.reduce((total, count) => total + count, 0)
 }
 
-async function scanCanvidImportState() {
+async function scanLegacyImportState() {
   const paths = getPaths()
-  const canvidPackage = await readJson(paths.currentCanvidPackageJson, {})
+  const sourcePackage = await readJson(paths.legacyPackageJson, {})
 
   return {
-    detected: existsSync(paths.currentCanvidRoot),
-    canvidVersion: canvidPackage.version ?? '',
-    presetCount: await countFiles(paths.currentCanvidPresets),
-    projectCount: await countFiles(paths.currentCanvidProjects),
-    hasWindowState: existsSync(paths.currentCanvidWindowState),
-    hasPartitionState: existsSync(paths.currentCanvidPartition),
+    detected: existsSync(paths.legacyImportRoot),
+    sourceVersion: sourcePackage.version ?? '',
+    presetCount: await countFiles(paths.legacyPresets),
+    projectCount: await countFiles(paths.legacyProjects),
+    hasWindowState: existsSync(paths.legacyWindowState),
+    hasPartitionState: existsSync(paths.legacyPartition),
     scannedAt: new Date().toISOString(),
   }
 }
 
-async function importCanvidState() {
+async function importLegacyState() {
   const paths = getPaths()
-  const summary = await scanCanvidImportState()
+  const summary = await scanLegacyImportState()
 
   if (summary.hasWindowState) {
-    await cp(paths.currentCanvidWindowState, path.join(paths.importsRoot, 'window-state.json'), {
+    await cp(paths.legacyWindowState, path.join(paths.importsRoot, 'window-state.json'), {
       force: true,
     })
   }
 
-  if (summary.presetCount > 0 && existsSync(paths.currentCanvidPresets)) {
-    await cp(paths.currentCanvidPresets, path.join(paths.importsRoot, 'Presets'), {
+  if (summary.presetCount > 0 && existsSync(paths.legacyPresets)) {
+    await cp(paths.legacyPresets, path.join(paths.importsRoot, 'Presets'), {
       recursive: true,
       force: true,
     })
   }
 
-  if (summary.projectCount > 0 && existsSync(paths.currentCanvidProjects)) {
-    await cp(paths.currentCanvidProjects, path.join(paths.importsRoot, 'Projects'), {
+  if (summary.projectCount > 0 && existsSync(paths.legacyProjects)) {
+    await cp(paths.legacyProjects, path.join(paths.importsRoot, 'Projects'), {
       recursive: true,
       force: true,
     })
@@ -2510,7 +2522,7 @@ async function importCanvidState() {
     importState: {
       lastScannedAt: summary.scannedAt,
       lastImportedAt: new Date().toISOString(),
-      canvidVersion: summary.canvidVersion,
+      sourceVersion: summary.sourceVersion,
       presetCount: summary.presetCount,
       projectCount: summary.projectCount,
       hasWindowState: summary.hasWindowState,
@@ -3040,7 +3052,7 @@ async function prepareSpawnArgs(command, args) {
 
   const filterScriptPath = path.join(
     app.getPath('temp'),
-    `canvid-filter-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+    `movion-filter-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
   )
   await writeFile(filterScriptPath, filterComplexValue, 'utf8')
   normalizedArgs.splice(filterComplexIndex, 2, '-filter_complex_script', filterScriptPath)
@@ -3896,7 +3908,8 @@ async function resolveFfmpegPath() {
         !bestCandidate ||
         inspectedCandidate.capabilityScore > bestCandidate.capabilityScore ||
         (inspectedCandidate.capabilityScore === bestCandidate.capabilityScore &&
-          candidate !== path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Canvid', 'resources', 'binaries', 'win', 'ffmpeg', 'ffmpeg.exe'))
+      candidate !== path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Canvid', 'resources', 'binaries', 'win', 'ffmpeg', 'ffmpeg.exe') &&
+      candidate !== path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Movion', 'resources', 'binaries', 'win', 'ffmpeg', 'ffmpeg.exe'))
       ) {
         bestCandidate = inspectedCandidate
       }
@@ -7142,7 +7155,7 @@ async function validateRenderableRecording(filePath) {
 
   const tempValidationOutput = path.join(
     app.getPath('temp'),
-    `canvid-validate-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`,
+    `movion-validate-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`,
   )
 
   try {
@@ -7178,7 +7191,7 @@ async function validateRenderableAudioRecording(filePath) {
 
   const tempValidationOutput = path.join(
     app.getPath('temp'),
-    `canvid-validate-audio-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`,
+    `movion-validate-audio-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`,
   )
 
   try {
@@ -7618,7 +7631,7 @@ async function exportClip(payload) {
   const ffmpeg = await resolveFfmpegPath()
 
   if (!ffmpeg.available || !ffmpeg.path) {
-    throw new Error('FFmpeg was not found. Configure CANVID_LOCAL_FFMPEG or install ffmpeg.exe.')
+    throw new Error('FFmpeg was not found. Configure MOVION_LOCAL_FFMPEG or install ffmpeg.exe.')
   }
 
   await ensureRenderableSource(clip.filePath, clip.label)
@@ -8051,7 +8064,7 @@ async function exportTimeline(payload) {
   const ffmpeg = await resolveFfmpegPath()
 
   if (!ffmpeg.available || !ffmpeg.path) {
-    throw new Error('FFmpeg was not found. Configure CANVID_LOCAL_FFMPEG or install ffmpeg.exe.')
+    throw new Error('FFmpeg was not found. Configure MOVION_LOCAL_FFMPEG or install ffmpeg.exe.')
   }
 
   const clipsById = new Map(project.clips.map((clip) => [clip.id, clip]))
@@ -8272,7 +8285,7 @@ app.whenReady().then(async () => {
       const workspace = await loadProjectWorkspace()
       const payload = {
         settings: await loadSettings(),
-        importState: await scanCanvidImportState(),
+    importState: await scanLegacyImportState(),
         activeProject: workspace.activeProject,
         projects: workspace.projects,
         ffmpeg: {
@@ -8460,8 +8473,8 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('settings:load', async () => loadSettings())
   ipcMain.handle('settings:save', async (_event, patch) => saveSettings(patch))
-  ipcMain.handle('import:scan', async () => scanCanvidImportState())
-  ipcMain.handle('import:run', async () => importCanvidState())
+ipcMain.handle('import:scan', async () => scanLegacyImportState())
+ipcMain.handle('import:run', async () => importLegacyState())
   ipcMain.handle('project:load', async () => loadProject())
   ipcMain.handle('project:list', async () => listProjects())
   ipcMain.handle('project:save', async (_event, patch) => saveProject(patch))

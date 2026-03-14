@@ -24,7 +24,7 @@ export type MotionPreset = {
 
 export type ImportStateSummary = {
   detected: boolean
-  canvidVersion: string
+  sourceVersion: string
   presetCount: number
   projectCount: number
   hasWindowState: boolean
@@ -45,7 +45,7 @@ export type LocalSettings = {
   importState: {
     lastScannedAt: string
     lastImportedAt: string
-    canvidVersion: string
+    sourceVersion: string
     presetCount: number
     projectCount: number
     hasWindowState: boolean
