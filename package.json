@@ -5,6 +5,26 @@
   "version": "0.1.0",
   "description": "Local-first desktop screencast editor with cinematic motion zoom, cursor enhancement, and export controls.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/ads123121/movion",
+  "bugs": {
+    "url": "https://github.com/ads123121/movion/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ads123121/movion.git"
+  },
+  "keywords": [
+    "electron",
+    "screencast",
+    "screen-recording",
+    "video-editor",
+    "cursor",
+    "motion-zoom",
+    "ffmpeg"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -13,6 +33,8 @@
     "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "check": "npm run build && npm run lint && node --check electron/main.mjs",
+    "audit:runtime": "npm audit --omit=dev",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "start": "electron ."
   },

@@ -23,11 +23,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Validate source
+        run: npm run check
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Check Electron entry
-        run: node --check electron/main.mjs
+      - name: Audit runtime dependencies
+        run: npm run audit:runtime

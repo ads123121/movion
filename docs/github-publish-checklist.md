@@ -4,12 +4,12 @@
 
 Work only from:
 
-- `C:\Users\glebg\AppData\Local\Canvid\Movion`
+- `<workspace>/Movion`
 
 Do not initialize or publish from:
 
-- `C:\Users\glebg\AppData\Local\Canvid`
-- `C:\Users\glebg\AppData\Local\Canvid\canvid-local-fork`
+- `<workspace>`
+- `<workspace>/canvid-local-fork`
 
 ## Before first push
 
@@ -33,7 +33,7 @@ git push -u origin main
 
 ## Safety rules
 
-- Never run `git add .` from `C:\Users\glebg\AppData\Local\Canvid`.
+- Never run `git add .` from the parent workspace directory.
 - Never commit `node_modules`, `dist`, `output`, logs, recordings, exports, or local env files.
 - Keep API keys only in local environment variables or ignored `.env` files.
 - If a secret was ever committed in another repo, rotate it before any public release.

@@ -55,4 +55,4 @@ Do not commit:
 
 - use bug reports for concrete issues
 - use feature requests for larger workflow improvements
-- use security channels in [SECURITY.md](/C:/Users/glebg/AppData/Local/Canvid/Movion/SECURITY.md) for vulnerabilities
+- use security channels in [SECURITY.md](./SECURITY.md) for vulnerabilities

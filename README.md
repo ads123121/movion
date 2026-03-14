@@ -41,7 +41,7 @@ Movion is designed to work locally by default.
 - OpenAI-backed features are optional and require your own API key
 - if you enable transcript generation, selected audio is sent to OpenAI for processing
 
-Read [PRIVACY.md](/C:/Users/glebg/AppData/Local/Canvid/Movion/PRIVACY.md) before enabling provider-backed features.
+Read [PRIVACY.md](./PRIVACY.md) before enabling provider-backed features.
 
 ## Quick start
 
@@ -101,6 +101,14 @@ Current compatibility sources:
 - `%USERPROFILE%/Videos/Canvid/Projects`
 - `%USERPROFILE%/Videos/Canvid/Presets`
 
+## Project docs
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [ROADMAP.md](./ROADMAP.md)
+- [GOVERNANCE.md](./GOVERNANCE.md)
+- [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
+- [docs/openai-application-pack-2026-03-14.md](./docs/openai-application-pack-2026-03-14.md)
+
 ## Open source hygiene
 
 Before contributing or publishing forks:
@@ -112,10 +120,10 @@ Before contributing or publishing forks:
 
 See:
 
-- [CONTRIBUTING.md](/C:/Users/glebg/AppData/Local/Canvid/Movion/CONTRIBUTING.md)
-- [SECURITY.md](/C:/Users/glebg/AppData/Local/Canvid/Movion/SECURITY.md)
-- [SUPPORT.md](/C:/Users/glebg/AppData/Local/Canvid/Movion/SUPPORT.md)
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [SECURITY.md](./SECURITY.md)
+- [SUPPORT.md](./SUPPORT.md)
 
 ## License
 
-Apache-2.0. See [LICENSE](/C:/Users/glebg/AppData/Local/Canvid/Movion/LICENSE).
+Apache-2.0. See [LICENSE](./LICENSE).
