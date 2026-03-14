@@ -2,6 +2,9 @@
 /node_modules/
 /dist/
 /dist-ssr/
+/release/
+/build/*
+!/build/icon.svg
 
 # Local runtime artifacts
 /output/

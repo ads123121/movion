@@ -53,6 +53,14 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 
+function resolveBundledHelperPath(fileName) {
+  if (!app.isPackaged) {
+    return path.join(__dirname, fileName)
+  }
+
+  return path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', fileName)
+}
+
 const captureState = {
   sourceId: null,
   sourceKind: 'screen',
@@ -459,7 +467,7 @@ async function startPointerTracker() {
   const powershellPath = process.env.ComSpec
     ? 'powershell.exe'
     : 'powershell.exe'
-  const scriptPath = path.join(__dirname, 'windows-global-pointer.ps1')
+  const scriptPath = resolveBundledHelperPath('windows-global-pointer.ps1')
 
   try {
     const helperProcess = spawn(
@@ -578,7 +586,7 @@ async function getCursorAppearanceCatalog() {
   const powershellPath = process.env.ComSpec
     ? 'powershell.exe'
     : 'powershell.exe'
-  const scriptPath = path.join(__dirname, 'windows-global-pointer.ps1')
+  const scriptPath = resolveBundledHelperPath('windows-global-pointer.ps1')
 
   try {
     const output = await runProcess(
@@ -662,7 +670,7 @@ async function startKeyboardTracker() {
   const powershellPath = process.env.ComSpec
     ? 'powershell.exe'
     : 'powershell.exe'
-  const scriptPath = path.join(__dirname, 'windows-global-keyboard.ps1')
+  const scriptPath = resolveBundledHelperPath('windows-global-keyboard.ps1')
 
   try {
     const helperProcess = spawn(

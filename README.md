@@ -65,6 +65,18 @@ npm run build
 npm run start
 ```
 
+Windows release packaging:
+
+```bash
+npm run dist:win
+```
+
+CI-grade branded release packaging:
+
+```bash
+npm run dist:win:release
+```
+
 ## Optional OpenAI integration
 
 Transcript generation is optional.
@@ -104,6 +116,7 @@ See:
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [ROADMAP.md](./ROADMAP.md)
 - [GOVERNANCE.md](./GOVERNANCE.md)
+- [RELEASING.md](./RELEASING.md)
 - [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
 - [docs/openai-application-pack-2026-03-14.md](./docs/openai-application-pack-2026-03-14.md)
 
