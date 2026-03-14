@@ -1,5 +1,6 @@
 import { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import './App.css'
+import './studioShell.css'
 import type {
   AutoZoomMode,
   BootstrapPayload,
@@ -243,6 +244,28 @@ const syncMediaElementTime = (element: HTMLMediaElement, targetSeconds: number, 
   }
 }
 
+const playMediaElementWhenReady = (
+  element: HTMLMediaElement,
+  targetSeconds: number,
+  toleranceSeconds: number,
+  label: string,
+) => {
+  const startPlayback = () => {
+    syncMediaElementTime(element, targetSeconds, toleranceSeconds)
+    void element.play().catch((error) => {
+      console.warn(`${label} play rejected`, error)
+    })
+  }
+
+  if (element.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+    element.addEventListener('canplay', startPlayback, { once: true })
+    return () => element.removeEventListener('canplay', startPlayback)
+  }
+
+  startPlayback()
+  return undefined
+}
+
 const createVoiceClarityPreviewChain = (audioContext: AudioContext, profile: VoiceClarityProfile) => {
   const highpass = audioContext.createBiquadFilter()
   highpass.type = 'highpass'
@@ -279,12 +302,12 @@ const outputFormatOptions = [
   {
     id: 'mp4',
     label: 'MP4 master',
-    detail: 'H.264 or H.265 with audio for demos and final delivery.',
+    detail: 'Master video with audio.',
   },
   {
     id: 'gif',
     label: 'Animated GIF',
-    detail: 'Looping, silent share asset for social previews and docs.',
+    detail: 'Looping silent share asset.',
   },
 ] as const
 
@@ -330,22 +353,22 @@ const autoZoomDetectionOptions: Array<{
   {
     id: 'off',
     label: 'Off',
-    detail: 'Keep capture fully manual and add zoom blocks later.',
+    detail: 'Add zoom blocks manually later.',
   },
   {
     id: 'all-clicks',
     label: 'All Clicks',
-    detail: 'Generate smart zoom blocks from every primary click.',
+    detail: 'Build zoom blocks from primary clicks.',
   },
   {
     id: 'long-clicks',
     label: 'Long Clicks',
-    detail: 'Only add zoom blocks when the pointer press is held momentarily.',
+    detail: 'Only create zooms from held clicks.',
   },
   {
     id: 'ctrl-click',
     label: 'Ctrl+Click',
-    detail: 'Only generate zoom blocks when Control is held during the click.',
+    detail: 'Only create zooms when Control is held.',
   },
 ] as const
 
@@ -523,17 +546,17 @@ const cursorStyleOptions: Array<{
   {
     id: 'windows',
     label: 'Windows',
-    detail: 'Sharp pointer with a clean white fill.',
+    detail: 'Sharp white arrow.',
   },
   {
     id: 'mac',
     label: 'Mac',
-    detail: 'Softer pointer edge with a darker outline.',
+    detail: 'Soft edge, dark outline.',
   },
   {
     id: 'touch',
     label: 'Touch',
-    detail: 'Rounded contact dot for finger-first demos.',
+    detail: 'Rounded touch dot.',
   },
 ]
 
@@ -557,19 +580,19 @@ const cursorAnimationStyleOptions: Array<{
 }> = [
   {
     id: 'molasses',
-    label: 'Molasses',
+    label: 'Glide',
   },
   {
     id: 'default',
-    label: 'Default',
+    label: 'Balanced',
   },
   {
     id: 'gentle',
-    label: 'Gentle',
+    label: 'Cinematic',
   },
   {
     id: 'stiff',
-    label: 'Stiff',
+    label: 'Snappy',
   },
 ]
 
@@ -581,17 +604,17 @@ const keyboardShortcutSizeOptions: Array<{
   {
     id: 'small',
     label: 'Small',
-    detail: 'Compact overlay for dense coding videos.',
+    detail: 'Dense screens.',
   },
   {
     id: 'medium',
     label: 'Medium',
-    detail: 'Balanced label size for most screen recordings.',
+    detail: 'Default.',
   },
   {
     id: 'large',
     label: 'Large',
-    detail: 'Stronger shortcut callouts for training and tutorials.',
+    detail: 'Training first.',
   },
 ] as const
 
@@ -603,17 +626,17 @@ const captionSizeOptions: Array<{
   {
     id: 'small',
     label: 'Small',
-    detail: 'Compact captions with more room for the picture.',
+    detail: 'Picture first.',
   },
   {
     id: 'medium',
     label: 'Medium',
-    detail: 'Balanced reading size for most product walkthroughs.',
+    detail: 'Balanced.',
   },
   {
     id: 'large',
     label: 'Large',
-    detail: 'Training-first captions that stay readable on smaller exports.',
+    detail: 'Reading first.',
   },
 ] as const
 
@@ -1499,8 +1522,10 @@ const getFileUrlFromWindowsPath = (filePath: string) => {
     return ''
   }
 
-  const normalized = filePath.replace(/\\/g, '/')
-  return encodeURI(`file:///${normalized}`)
+  const params = new URLSearchParams({
+    path: filePath,
+  })
+  return `movion-media://local?${params.toString()}`
 }
 
 const hexToRgba = (hex: string, alpha: number) => {
@@ -2561,8 +2586,6 @@ function App() {
   const [sessionCursorTrackingAvailable, setSessionCursorTrackingAvailable] = useState(false)
   const [sessionKeyboardTrackingAvailable, setSessionKeyboardTrackingAvailable] = useState(false)
   const [liveCaptureCursorRenderMode, setLiveCaptureCursorRenderMode] = useState<CursorRenderMode>('baked')
-  const [recordingCursorSampleCount, setRecordingCursorSampleCount] = useState(0)
-  const [recordingShortcutCount, setRecordingShortcutCount] = useState(0)
   const [selectedKeyboardShortcutId, setSelectedKeyboardShortcutId] = useState('')
   const [selectedTranscriptSegmentId, setSelectedTranscriptSegmentId] = useState('')
   const [transcriptSegmentTextDraft, setTranscriptSegmentTextDraft] = useState('')
@@ -3152,6 +3175,21 @@ function App() {
       (project?.timeline.exports.length ?? 0),
     [project],
   )
+  const lastArtifactName = useMemo(() => {
+    const artifactPath = lastExportPath || lastSavedPath
+
+    if (!artifactPath) {
+      return 'No local artifact'
+    }
+
+    const parts = artifactPath.split(/[\\/]/).filter(Boolean)
+    return parts[parts.length - 1] || artifactPath
+  }, [lastExportPath, lastSavedPath])
+  const deliveryStatusLabel = lastExportPath
+    ? 'Latest export'
+    : lastSavedPath
+      ? 'Latest capture'
+      : 'Nothing saved'
 
   const activeProjectSummary = useMemo(
     () => projectLibrary.find((item) => item.isActive) ?? projectLibrary[0],
@@ -3171,33 +3209,33 @@ function App() {
 
   const captureCursorTelemetryLabel = useMemo(() => {
     if (!selectedSource) {
-      return 'No source armed'
+      return 'No source'
     }
 
     if (isRecording) {
       return sessionCursorTrackingAvailable
-        ? `${recordingCursorSampleCount} live sample(s)`
-        : 'Unavailable on this source'
+        ? 'Tracking live'
+        : 'Tracking off'
     }
 
     return selectedSource.kind === 'screen'
-      ? 'Ready on screen capture'
-      : 'Screen-only tracking'
-  }, [isRecording, recordingCursorSampleCount, selectedSource, sessionCursorTrackingAvailable])
+      ? 'Tracking ready'
+      : 'Static preset'
+  }, [isRecording, selectedSource, sessionCursorTrackingAvailable])
 
   const captureKeyboardTelemetryLabel = useMemo(() => {
     if (!selectedSource) {
-      return 'No source armed'
+      return 'No keys'
     }
 
     if (isRecording) {
       return sessionKeyboardTrackingAvailable
-        ? `${recordingShortcutCount} shortcut(s)`
-        : 'Unavailable on this source'
+        ? 'Keys live'
+        : 'Keys off'
     }
 
-    return 'Ready on Windows capture'
-  }, [isRecording, recordingShortcutCount, selectedSource, sessionKeyboardTrackingAvailable])
+    return 'Keys ready'
+  }, [isRecording, selectedSource, sessionKeyboardTrackingAvailable])
 
   const projectWorkspaceLocked =
     isProjectLibraryBusy ||
@@ -3552,8 +3590,8 @@ function App() {
   const previewKeyboardShortcutSummary = useMemo(() => {
     if (!previewClipContext?.clip.keyboardShortcuts?.length) {
       return {
-        label: 'No shortcuts',
-        detail: 'This take has no keyboard telemetry yet.',
+        label: 'No keys',
+        detail: 'No shortcut data.',
       }
     }
 
@@ -3561,16 +3599,16 @@ function App() {
 
     if (!activeShortcutSettings.enabled) {
       return {
-        label: 'Overlay disabled',
-        detail: `${visibleCount} recorded shortcut timestamp(s) are stored on this take but hidden from the stage and export.`,
+        label: 'Overlay off',
+        detail: `${visibleCount} stored`,
       }
     }
 
     return {
-      label: `${visibleCount} timestamp${visibleCount === 1 ? '' : 's'}`,
+      label: `${visibleCount} cue${visibleCount === 1 ? '' : 's'}`,
       detail: activeShortcutSettings.showSymbols
-        ? 'Shortcut overlay is using symbolic labels.'
-        : 'Shortcut overlay is using text labels.',
+        ? 'Symbols'
+        : 'Text',
     }
   }, [activeShortcutSettings.enabled, activeShortcutSettings.showSymbols, previewClipContext?.clip.keyboardShortcuts])
 
@@ -3578,7 +3616,7 @@ function App() {
     if (!previewClipContext?.clip.transcript?.segments?.length) {
       return {
         label: 'No transcript',
-        detail: 'Generate a transcript to enable captions and transcript-linked editing on this take.',
+        detail: 'Import or generate.',
       }
     }
 
@@ -3587,21 +3625,21 @@ function App() {
     if (!activeCaptionSettings.enabled) {
       return {
         label: 'Captions hidden',
-        detail: `${visibleCount} caption segment(s) remain stored on this take but hidden from stage and export.`,
+        detail: `${visibleCount} stored`,
       }
     }
 
     if (!previewActiveTranscriptSegment) {
       return {
-        label: `${visibleCount} segment${visibleCount === 1 ? '' : 's'} armed`,
+        label: `${visibleCount} armed`,
         detail: activeCaptionSettings.wordHighlighting
-          ? 'Word highlighting is ready when the next line appears.'
-          : 'Caption overlay is ready for stage preview and export.',
+          ? 'Word ready'
+          : 'Overlay ready',
       }
     }
 
     return {
-      label: activeCaptionSettings.wordHighlighting ? 'Word highlight live' : 'Caption live',
+      label: activeCaptionSettings.wordHighlighting ? 'Word live' : 'Caption live',
       detail: formatTranscriptSegmentSummary(previewActiveTranscriptSegment, activeCaptionSettings.showSpeakerLabels),
     }
   }, [
@@ -3667,18 +3705,18 @@ function App() {
 
   const selectedTranscriptTimelineAction = useMemo(() => {
     if (!selectedClip || !selectedTranscriptSegment) {
-      return {
-        mode: 'unavailable' as const,
-        item: null as ProjectTimelineItem | null,
-        message: 'Select a transcript line to cut or restore it in the sequence.',
+        return {
+          mode: 'unavailable' as const,
+          item: null as ProjectTimelineItem | null,
+          message: 'Select a line.',
+        }
       }
-    }
 
     if (!selectedClipTimelineItems.length) {
       return {
         mode: 'unavailable' as const,
         item: null as ProjectTimelineItem | null,
-        message: 'Add this take to the timeline before driving cuts from the transcript.',
+        message: 'Add this clip to the sequence first.',
       }
     }
 
@@ -3712,7 +3750,7 @@ function App() {
         return {
           mode: 'cut' as const,
           item: selectedShotOnClip,
-          message: `Cut this line out of "${selectedShotOnClip.label}" and keep a hidden restore point in the project.`,
+          message: `Cut from "${selectedShotOnClip.label}".`,
         }
       }
     }
@@ -3721,7 +3759,7 @@ function App() {
       return {
         mode: 'restore' as const,
         item: hiddenCutItem,
-        message: `Restore this line back into the sequence from "${hiddenCutItem.transcriptCut?.sourceLabel || hiddenCutItem.label}".`,
+        message: `Restore from "${hiddenCutItem.transcriptCut?.sourceLabel || hiddenCutItem.label}".`,
       }
     }
 
@@ -3729,18 +3767,18 @@ function App() {
       return {
         mode: 'cut' as const,
         item: matchingLiveItem,
-        message: `Cut this line out of "${matchingLiveItem.label}" and keep a hidden restore point in the project.`,
+        message: `Cut from "${matchingLiveItem.label}".`,
       }
     }
 
-    return {
-      mode: 'unavailable' as const,
-      item: null as ProjectTimelineItem | null,
-      message:
-        selectedShotOnClip && selectedShotOnClip.enabled !== false
-          ? 'The selected shot does not cover this spoken line. Pick another shot for this take or restore an earlier cut.'
-          : 'No live shot currently covers this spoken line.',
-    }
+      return {
+        mode: 'unavailable' as const,
+        item: null as ProjectTimelineItem | null,
+        message:
+          selectedShotOnClip && selectedShotOnClip.enabled !== false
+            ? 'Choose a shot that covers this line.'
+            : 'No live shot covers this line.',
+      }
   }, [selectedClip, selectedClipTimelineItems, selectedTimelineItem, selectedTranscriptSegment])
 
   const previewClipAudioSettings = useMemo(() => {
@@ -3787,82 +3825,59 @@ function App() {
     if (!previewClipContext) {
       return {
         label: 'Standby',
-        detail: 'Load a take to audition clip audio, isolated voice stems, and cleanup live on the stage.',
+        detail: 'Load a clip.',
       }
     }
 
-    const clarityLabel =
-      voiceClarityProfileOptions.find((option) => option.id === voiceClarityProfileDraft)?.label || 'Balanced'
-    const microphoneLabel =
-      previewMicrophonePlayback?.mode === 'retake'
-        ? `${previewActiveAudioRetake?.deviceLabel || previewClipContext.clip.microphoneTake?.deviceLabel || 'voice stem'} retake`
-        : previewClipContext.clip.microphoneTake?.deviceLabel || 'voice stem'
+    const voiceLabel = voiceClarityEnabledDraft ? 'Clean mic' : 'Voice stem'
+    const retakeLabel = previewActiveAudioRetake ? 'Retake' : ''
     const bedSummary = previewHasMusicBeds
-      ? `${previewMusicBeds.length} bed${previewMusicBeds.length === 1 ? '' : 's'} ${duckingEnabledDraft ? `ducking ${duckingReductionDraft} dB` : 'playing open'}`
+      ? `${previewMusicBeds.length} bed${previewMusicBeds.length === 1 ? '' : 's'}`
       : ''
+    const compactDetail = [voiceLabel, retakeLabel, bedSummary].filter(Boolean).join(' / ')
 
     if (!previewPlaybackHasAudio) {
       return {
-        label: 'Silent preview',
-        detail: 'This take has no embedded clip audio and no isolated microphone stem to audition.',
+        label: 'Silent',
+        detail: 'No audio',
       }
     }
 
     if (previewHasSourceAudio && previewHasVoiceStem) {
       return {
-        label: voiceClarityEnabledDraft
-          ? previewHasMusicBeds
-            ? 'Full mix + cleaned mic'
-            : 'Clip + cleaned mic'
-          : previewHasMusicBeds
-            ? 'Full mix + isolated mic'
-            : 'Clip + isolated mic',
-        detail: voiceClarityEnabledDraft
-          ? `Stage preview mixes clip audio with the isolated ${microphoneLabel}, applies ${clarityLabel} cleanup live${previewActiveAudioRetake ? ', swaps in the active transcript retake for this line' : ''}${bedSummary ? `, and keeps ${bedSummary}` : ''}.`
-          : `Stage preview mixes clip audio with the isolated ${microphoneLabel} in real time${previewActiveAudioRetake ? ' and swaps to the active transcript retake on this line' : ''}${bedSummary ? ` while ${bedSummary}` : ''}.`,
+        label: previewHasMusicBeds ? 'Full mix' : 'Clip + voice',
+        detail: compactDetail || 'Voice ready',
       }
     }
 
     if (previewHasVoiceStem) {
       return {
-        label: voiceClarityEnabledDraft
-          ? previewHasMusicBeds
-            ? 'Music + cleaned mic'
-            : 'Cleaned mic solo'
-          : previewHasMusicBeds
-            ? 'Music + mic stem'
-            : 'Mic stem solo',
-        detail: voiceClarityEnabledDraft
-          ? `${microphoneLabel} is auditioned with ${clarityLabel} cleanup in the stage mix${previewActiveAudioRetake ? ' while the selected line uses its retake overlay' : ''}${bedSummary ? ` while ${bedSummary}` : ''}.`
-          : `${microphoneLabel} is auditioned raw${previewActiveAudioRetake ? ' while the selected line uses its retake overlay' : ''}${bedSummary ? ` while ${bedSummary}` : ''}.`,
+        label: previewHasMusicBeds ? 'Voice + beds' : 'Voice focus',
+        detail: compactDetail || voiceLabel,
       }
     }
 
     if (previewHasMusicBeds) {
       return {
-        label: 'Sequence beds live',
-        detail: `Stage preview plays the current shot against ${bedSummary}.`,
+        label: 'Music beds',
+        detail: bedSummary || 'Beds live',
       }
     }
 
     return {
-      label: 'Clip audio only',
-      detail: `Stage preview plays the embedded clip track at ${formatGainDb(previewClipAudioSettings?.gainDb ?? 0)}.`,
+      label: 'Clip audio',
+      detail: `${formatGainDb(previewClipAudioSettings?.gainDb ?? 0)}`,
     }
   }, [
-    duckingEnabledDraft,
-    duckingReductionDraft,
     previewClipAudioSettings?.gainDb,
     previewClipContext,
     previewHasMusicBeds,
     previewHasSourceAudio,
     previewHasVoiceStem,
     previewActiveAudioRetake,
-    previewMicrophonePlayback?.mode,
     previewPlaybackHasAudio,
     previewMusicBeds.length,
     voiceClarityEnabledDraft,
-    voiceClarityProfileDraft,
   ])
 
   const stageBackgroundLayerStyle = useMemo(
@@ -4037,12 +4052,12 @@ function App() {
       : selectedClip?.label || selectedSource?.name || 'Preview'
 
   const previewMediaDetail = isRecording
-    ? `${activeProfile?.label ?? 'Capture'} · ${activeMotionPreset?.label ?? 'Motion'}`
+    ? `${activeMotionPreset?.label ?? activeProfile?.label ?? 'Capture'}`
     : previewClipContext?.isTimelinePreview && previewClipContext.timelineItem
-      ? `${previewClipContext.timelineItem.label} · ${previewClipContext.clip.captureProfile.qualityProfileLabel} · ${previewClipContext.clip.captureProfile.motionPresetLabel}`
+      ? `${previewClipContext.timelineItem.label} / ${previewClipContext.clip.captureProfile.motionPresetLabel}`
       : selectedClip
-        ? `${selectedClip.captureProfile.qualityProfileLabel} · ${selectedClip.captureProfile.motionPresetLabel}`
-        : 'Arm a source and record the first take.'
+        ? `${selectedClip.captureProfile.motionPresetLabel}`
+        : 'Arm a source to record.'
 
   const stageFocusEditingEnabled = Boolean(
     selectedFocusRegion &&
@@ -4332,8 +4347,13 @@ function App() {
   const stagePosterThumbnail = previewClipContext?.clip.thumbnailDataUrl || selectedSource?.thumbnailDataUrl || ''
   const stagePosterLabel = previewClipContext?.clip.label || previewMediaLabel
   const previewSequenceSummary = previewClipContext?.isTimelinePreview
-    ? `${previewClipContext.timelineIndex + 1}/${previewClipContext.timelineItemCount} shots live on the stage`
+    ? `Shot ${previewClipContext.timelineIndex + 1}/${previewClipContext.timelineItemCount}`
     : ''
+  const previewStageSummaryDetail = isRecording
+    ? `${activeProfile?.label ?? 'Capture'} / ${activeMotionPreset?.label ?? 'Motion'}`
+    : selectedClip
+      ? `${selectedClip.captureProfile.motionPresetLabel}`
+      : previewMediaDetail
 
   const canSplitSelectedTimelineItem = useMemo(() => {
     if (!selectedTimelineSegment) {
@@ -4711,6 +4731,10 @@ function App() {
       return
     }
 
+    if (isStagePlaying) {
+      return
+    }
+
     const syncPlaybackTime = () => {
       syncMediaElementTime(
         playbackElement,
@@ -4726,10 +4750,8 @@ function App() {
 
     syncPlaybackTime()
 
-    if (!isStagePlaying) {
-      playbackElement.pause()
-      void audioContext?.suspend().catch(() => undefined)
-    }
+    playbackElement.pause()
+    void audioContext?.suspend().catch(() => undefined)
   }, [
     isRecording,
     isStagePlaying,
@@ -4751,8 +4773,16 @@ function App() {
       return
     }
 
-    void audioContext?.resume().catch(() => undefined)
-    void playbackElement.play().catch(() => undefined)
+    void audioContext?.resume().catch((error) => {
+      console.warn('stage preview audio resume rejected', error)
+    })
+
+    return playMediaElementWhenReady(
+      playbackElement,
+      previewPlaybackTargetSecondsRef.current,
+      0.16,
+      'stage preview',
+    )
   }, [isRecording, isStagePlaying, previewClipContext?.fileUrl])
 
   useEffect(() => {
@@ -5087,6 +5117,10 @@ function App() {
       return
     }
 
+    if (isStagePlaying) {
+      return
+    }
+
     const syncPlaybackTime = () => {
       syncMediaElementTime(
         microphoneElement,
@@ -5102,10 +5136,8 @@ function App() {
 
     syncPlaybackTime()
 
-    if (!isStagePlaying) {
-      microphoneElement.pause()
-      void audioContext?.suspend().catch(() => undefined)
-    }
+    microphoneElement.pause()
+    void audioContext?.suspend().catch(() => undefined)
   }, [
     isRecording,
     isStagePlaying,
@@ -5127,9 +5159,22 @@ function App() {
       return
     }
 
-    void audioContext?.resume().catch(() => undefined)
-    void microphoneElement.play().catch(() => undefined)
-  }, [isRecording, isStagePlaying, previewMicrophonePlayback?.fileUrl])
+    void audioContext?.resume().catch((error) => {
+      console.warn('stage microphone audio resume rejected', error)
+    })
+
+    return playMediaElementWhenReady(
+      microphoneElement,
+      previewMicrophonePlayback.sourceSeconds,
+      0.16,
+      'stage microphone',
+    )
+  }, [
+    isRecording,
+    isStagePlaying,
+    previewMicrophonePlayback?.fileUrl,
+    previewMicrophonePlayback?.sourceSeconds,
+  ])
 
   useEffect(() => {
     if (!isStagePlaying || isRecording || !previewClipContext?.fileUrl) {
@@ -5220,9 +5265,13 @@ function App() {
       return
     }
 
+    if (isStagePlaying) {
+      return
+    }
+
     const syncPlaybackTime = () => {
       try {
-        if (Math.abs(playbackElement.currentTime - previewPlaybackTargetSeconds) > (isStagePlaying ? 0.2 : 0.04)) {
+        if (Math.abs(playbackElement.currentTime - previewPlaybackTargetSeconds) > 0.04) {
           playbackElement.currentTime = previewPlaybackTargetSeconds
         }
       } catch {
@@ -5237,18 +5286,40 @@ function App() {
 
     syncPlaybackTime()
 
-    if (!isStagePlaying) {
-      playbackElement.pause()
-      return
-    }
-
-    void playbackElement.play().catch(() => undefined)
+    playbackElement.pause()
   }, [
     activeCameraSettings.enabled,
     isRecording,
     isStagePlaying,
     previewClipContext?.cameraFileUrl,
     previewPlaybackTargetSeconds,
+  ])
+
+  useEffect(() => {
+    const playbackElement = stagePlaybackCameraRef.current
+
+    if (!playbackElement || isRecording || !activeCameraSettings.enabled || !previewClipContext?.cameraFileUrl) {
+      return
+    }
+
+    playbackElement.muted = true
+
+    if (!isStagePlaying) {
+      playbackElement.pause()
+      return
+    }
+
+    return playMediaElementWhenReady(
+      playbackElement,
+      previewPlaybackTargetSecondsRef.current,
+      0.16,
+      'stage camera',
+    )
+  }, [
+    activeCameraSettings.enabled,
+    isRecording,
+    isStagePlaying,
+    previewClipContext?.cameraFileUrl,
   ])
 
   useEffect(() => {
@@ -6718,8 +6789,6 @@ function App() {
     setLiveCaptureCursorRenderMode('baked')
     setSessionCursorTrackingAvailable(false)
     setSessionKeyboardTrackingAvailable(false)
-    setRecordingCursorSampleCount(0)
-    setRecordingShortcutCount(0)
     hideLiveCursorDecorations()
   }
 
@@ -6813,7 +6882,6 @@ function App() {
           referenceHeight: snapshot.cursorReferenceHeight,
         }
         scheduleLiveCursorDecorationsSync()
-        setRecordingCursorSampleCount(cursorTrackPointsRef.current.length)
       } else {
         liveCursorVisualRef.current = null
         scheduleLiveCursorDecorationsSync()
@@ -6891,8 +6959,6 @@ function App() {
             visible: true,
           })
         }
-
-        setRecordingShortcutCount(keyboardShortcutEventsRef.current.length)
       }
     } catch (error) {
       console.warn('Cursor telemetry sampling failed', error)
@@ -6913,8 +6979,6 @@ function App() {
     keyboardShortcutEventsRef.current = []
     cursorAppearanceAssetRef.current.clear()
     cursorAppearanceKindRef.current.clear()
-    setRecordingCursorSampleCount(0)
-    setRecordingShortcutCount(0)
     liveCursorVisualRef.current = null
     hideLiveCursorDecorations()
     cursorTrackingAvailableRef.current = trackingAvailable
@@ -10386,18 +10450,76 @@ function App() {
   const railItems: Array<{
     id: StudioSection
     label: string
+    description: string
     icon: Parameters<typeof StudioIcon>[0]['name']
   }> = [
-    { id: 'background', label: 'Background', icon: 'background' },
-    { id: 'capture', label: 'Capture', icon: 'capture' },
-    { id: 'camera', label: 'Camera', icon: 'camera' },
-    { id: 'cursor', label: 'Cursor', icon: 'cursor' },
-    { id: 'keyboard', label: 'Keyboard', icon: 'keyboard' },
-    { id: 'captions', label: 'Captions', icon: 'captions' },
-    { id: 'audio', label: 'Audio', icon: 'audio' },
-    { id: 'export', label: 'Export', icon: 'export' },
-    { id: 'projects', label: 'Projects', icon: 'projects' },
+    { id: 'background', label: 'Background', description: 'Atmosphere and framing', icon: 'background' },
+    { id: 'capture', label: 'Capture', description: 'Sources and recording', icon: 'capture' },
+    { id: 'camera', label: 'Camera', description: 'Facecam composition', icon: 'camera' },
+    { id: 'cursor', label: 'Cursor', description: 'Pointer emphasis', icon: 'cursor' },
+    { id: 'keyboard', label: 'Keyboard', description: 'Shortcut callouts', icon: 'keyboard' },
+    { id: 'captions', label: 'Captions', description: 'Transcript overlays', icon: 'captions' },
+    { id: 'audio', label: 'Audio', description: 'Voice and beds', icon: 'audio' },
+    { id: 'export', label: 'Export', description: 'Render and delivery', icon: 'export' },
+    { id: 'projects', label: 'Workspaces', description: 'Library and branching', icon: 'projects' },
   ]
+
+  const activeRailItem = railItems.find((item) => item.id === activeStudioSection) ?? railItems[0]
+  const selectedClipFocusRegionCount = selectedClip?.focusRegions?.length ?? 0
+  const projectClipCount = project?.clips.length ?? 0
+  const projectMetaLabel = `${projectClipCount} clip${projectClipCount === 1 ? '' : 's'} / ${formatDuration(totalClipDuration)}${enabledTimelineItemCount ? ` / ${enabledTimelineItemCount} live` : ''}`
+  const activeClipLabel = selectedClip?.label ?? 'No clip selected'
+  const activeClipMeta = selectedClip
+    ? `${formatDuration(selectedClip.durationSeconds)} / ${selectedTimelineItem ? 'In sequence' : 'Clip only'}`
+    : 'Load or select a take'
+  const motionSummaryLabel = selectedClipFocusRegionCount
+    ? `${selectedClipFocusRegionCount} zoom block${selectedClipFocusRegionCount === 1 ? '' : 's'}`
+    : 'No zoom blocks'
+  const motionSupportLabel = selectedClip?.cursorTrack?.points?.length
+    ? 'Tracked'
+    : selectedSource
+      ? 'Guided'
+      : 'Manual'
+  const previewDeskPrimaryBadge = selectedClip?.label ?? previewMediaLabel
+  const previewDeskSecondaryBadge = selectedClipMotionPreset?.label ?? activeMotionPreset?.label ?? 'Motion ready'
+  const timelineLiveItemsLabel = `${enabledTimelineItemCount} live item${enabledTimelineItemCount === 1 ? '' : 's'}`
+  const selectedTimelineOrderLabel = selectedTimelineSegment
+    ? `Shot ${selectedTimelineSegment.index + 1} of ${Math.max(timelineSequence.length, 1)}`
+    : enabledTimelineItemCount
+      ? `${enabledTimelineItemCount} live`
+      : 'Select a clip'
+  const stagePrimaryActionLabel = selectedTimelineItem ? 'Apply trim' : 'Crop frame'
+  const stageSecondaryActionLabel = selectedTimelineItem ? 'Reset trim' : 'Auto zoom'
+  const stagePlayActionLabel = isStagePlaying ? 'Pause' : 'Play'
+  const timelineDurationBadge = previewTimelineDuration ? `${formatDuration(previewTimelineDuration)} sequence` : 'No sequence'
+  const clipLaneLabel = selectedTimelineItem ? 'Order and trim' : selectedClip ? 'Select or add clips' : 'Load a clip'
+  const motionLaneLabel = selectedFocusRegion
+    ? selectedFocusRegion.label
+    : selectedClip
+      ? 'Zoom blocks and focus'
+      : 'Load a clip'
+  const stageStateLabel = isRecording
+    ? 'Recording'
+    : selectedClip
+      ? 'Preview ready'
+      : selectedSource
+        ? 'Capture ready'
+        : 'Choose source'
+  const stageStateDetail = isRecording
+    ? 'Capture in progress.'
+    : selectedClip
+      ? selectedTimelineItem
+        ? 'Sequence loaded.'
+        : 'Clip loaded.'
+      : selectedSource
+        ? 'Ready to record.'
+        : 'Pick a source.'
+  const stageArtifactCaption = lastExportPath ? 'Last export' : lastSavedPath ? 'Last capture' : 'Artifact'
+  const stageArtifactDetail = lastExportPath || lastSavedPath ? lastArtifactName : 'Nothing saved yet'
+  const stageEngineLabel = boot?.ffmpeg.available ? 'Ready' : 'Needed'
+  const stageEngineDetail = boot?.ffmpeg.available
+    ? `${activeOutputFormat?.label ?? project?.output.format?.toUpperCase() ?? 'MP4'} export ready.`
+    : 'Install FFmpeg to export.'
 
   const backgroundModes: Array<{
     id: BackgroundMode
@@ -12549,9 +12671,17 @@ function App() {
             <StudioIcon name="menu" />
           </button>
 
+          <div className="studio-brand-lockup" aria-label="Movion studio">
+            <span className="studio-logo-mark" aria-hidden="true" />
+            <div className="studio-logo-copy">
+              <strong>MOVION</strong>
+              <small>Editorial capture studio</small>
+            </div>
+          </div>
+
           <div className="studio-file-meta">
             <strong>*{project.title}.movion</strong>
-            <span>{project.clips.length} clip(s) · {enabledTimelineItemCount} live item(s) · {formatDuration(totalClipDuration)}</span>
+            <span>{projectMetaLabel}</span>
           </div>
 
           {isFileMenuOpen ? (
@@ -12577,8 +12707,8 @@ function App() {
                 }}
                 disabled={projectWorkspaceLocked}
               >
-                <strong>Branch Active</strong>
-                <span>Duplicate</span>
+                <strong>Duplicate project</strong>
+                <span>Create branch</span>
               </button>
               <button
                 type="button"
@@ -12588,8 +12718,8 @@ function App() {
                   void window.forkApi.shell.showInFolder(lastSavedPath || boot.paths.capturesRoot)
                 }}
               >
-                <strong>My Videos</strong>
-                <span>Open captures</span>
+                <strong>Open captures</strong>
+                <span>Latest recordings</span>
               </button>
               <button
                 type="button"
@@ -12599,8 +12729,8 @@ function App() {
                   void window.forkApi.shell.showInFolder(lastExportPath || boot.paths.exportsRoot)
                 }}
               >
-                <strong>Open Exports</strong>
-                <span>{totalExportCount} file(s)</span>
+                <strong>Open exports</strong>
+                <span>{totalExportCount} file{totalExportCount === 1 ? '' : 's'}</span>
               </button>
               <button
                 type="button"
@@ -12622,18 +12752,31 @@ function App() {
                 }}
                 disabled={isScanningImport}
               >
-                <strong>Scan Legacy Import</strong>
+                <strong>Scan legacy data</strong>
                 <span>{isScanningImport ? 'Scanning...' : 'Inspect previous install'}</span>
               </button>
             </div>
           ) : null}
         </div>
 
-        <div className="studio-logo">MOVION</div>
-
         <div className="studio-header-right">
-          <button type="button" className="upgrade-pill">
-            Upgrade
+          <div className="studio-header-statuses" aria-label="Studio status">
+            <span className="studio-header-badge">
+              <strong>Motion</strong>
+              <small>{activeMotionPreset?.label ?? 'Ready'}</small>
+            </span>
+            <span className={`studio-header-badge runtime ${boot.ffmpeg.available ? 'ready' : 'warning'}`.trim()}>
+              <strong>Engine</strong>
+              <small>{boot.ffmpeg.available ? 'Ready' : 'Needs FFmpeg'}</small>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="secondary studio-header-action"
+            onClick={() => void window.forkApi.shell.showInFolder(lastExportPath || boot.paths.exportsRoot)}
+          >
+            <StudioIcon name="folder" />
+            <span>Exports</span>
           </button>
           <button
             type="button"
@@ -12643,37 +12786,78 @@ function App() {
           >
             <StudioIcon name="spark" />
           </button>
-          <div className="window-controls" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
         </div>
       </header>
 
-      <section className="studio-workspace">
-        <nav className="studio-rail" aria-label="Studio sections">
-          {railItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`rail-button ${activeStudioSection === item.id ? 'active' : ''}`.trim()}
-              onClick={() => setActiveStudioSection(item.id)}
-              aria-label={item.label}
-              title={item.label}
-            >
-              <StudioIcon name={item.icon} />
-            </button>
-          ))}
-        </nav>
+      <section className="studio-command-deck">
+        <aside className="studio-rail-panel">
+          <div className="studio-rail-head">
+            <span>Studio</span>
+            <strong>Tools</strong>
+          </div>
 
-        <aside className="studio-inspector">
+          <nav className="studio-rail" aria-label="Studio sections">
+            {railItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`rail-button ${activeStudioSection === item.id ? 'active' : ''}`.trim()}
+                onClick={() => setActiveStudioSection(item.id)}
+                aria-label={item.label}
+                aria-current={activeStudioSection === item.id ? 'page' : undefined}
+                title={item.label}
+              >
+                <span className="rail-button-icon">
+                  <StudioIcon name={item.icon} />
+                </span>
+                <span className="rail-button-copy">
+                  <strong>{item.label}</strong>
+                </span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="studio-rail-foot">
+            <span>Active</span>
+            <strong>{activeRailItem.label}</strong>
+            <small>
+              {projectClipCount} clip{projectClipCount === 1 ? '' : 's'} / {enabledTimelineItemCount} live
+            </small>
+          </div>
+        </aside>
+
+        <section className="studio-workspace">
+          <div className="studio-hero-band">
+            <article className="studio-hero-card emphasis">
+              <span>Project</span>
+              <strong>{project.title}</strong>
+              <small>{projectMetaLabel}</small>
+            </article>
+            <article className="studio-hero-card primary">
+              <span>Clip</span>
+              <strong>{activeClipLabel}</strong>
+              <small>{activeClipMeta}</small>
+            </article>
+            <article className="studio-hero-card meta">
+              <span>Motion</span>
+              <strong>{activeMotionPreset?.label ?? 'Motion ready'}</strong>
+              <small>{motionSummaryLabel} / {motionSupportLabel}</small>
+            </article>
+            <article className="studio-hero-card meta">
+              <span>Delivery</span>
+              <strong>{activeOutputFormat?.label ?? project.output.format.toUpperCase()}</strong>
+              <small>{deliveryStatusLabel} / {lastArtifactName}</small>
+            </article>
+          </div>
+
+          <div className="studio-editor-grid">
+            <aside className="studio-inspector">
           <div className="inspector-scroll">
             {activeStudioSection === 'background' ? (
               <>
                 <div className="inspector-header">
                   <p>Background</p>
-                  <h2>Frame and surface</h2>
+                  <h2>Canvas styling</h2>
                 </div>
 
                 <div className="segment-tabs">
@@ -12698,7 +12882,7 @@ function App() {
                   <section className="inspector-section">
                     <div className="section-title">
                       <span>Wallpaper</span>
-                      <strong>Built-in atmospheres</strong>
+                      <strong>Atmospheres</strong>
                     </div>
                     <div className="preset-swatch-grid">
                       {wallpaperPresets.map((preset) => (
@@ -12724,20 +12908,20 @@ function App() {
                 {backgroundMode === 'image' ? (
                   <section className="inspector-section">
                     <div className="section-title">
-                      <span>Background image</span>
-                      <strong>Drop in your own canvas</strong>
+                      <span>Image</span>
+                      <strong>Backdrop</strong>
                     </div>
                     <div className="image-upload-card">
                       {activeBackgroundSettings.imagePath ? (
                         <>
                           <div className="image-upload-preview" style={buildBackgroundLayerStyle(activeBackgroundSettings)} />
                           <strong>{activeBackgroundSettings.imagePath.split('\\').pop()}</strong>
-                          <span>{activeBackgroundSettings.imagePath}</span>
+                          <span>Local image</span>
                         </>
                       ) : (
                         <>
-                          <strong>Bring an image file into the frame</strong>
-                          <span>PNG, JPG, JPEG, or WEBP. The file stays local inside your Movion workspace.</span>
+                          <strong>Add background image</strong>
+                          <span>PNG, JPG, or WEBP</span>
                         </>
                       )}
                       <div className="image-upload-actions">
@@ -12761,7 +12945,7 @@ function App() {
                   <section className="inspector-section">
                     <div className="section-title">
                       <span>Gradient</span>
-                      <strong>Studio gradients</strong>
+                      <strong>Gradients</strong>
                     </div>
                     <div className="preset-swatch-grid wide">
                       {gradientPresets.map((preset) => (
@@ -12788,7 +12972,7 @@ function App() {
                   <section className="inspector-section">
                     <div className="section-title">
                       <span>Color</span>
-                      <strong>Solid canvas</strong>
+                      <strong>Solid fill</strong>
                     </div>
                     <div className="color-chip-row">
                       {backgroundColorChips.map((chip) => (
@@ -12825,8 +13009,8 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Background blur</span>
-                    <strong>Atmosphere depth</strong>
+                    <span>Blur</span>
+                    <strong>Backdrop blur</strong>
                   </div>
                   <div className="slider-row">
                     <input
@@ -12858,7 +13042,7 @@ function App() {
                 <section className="inspector-section">
                   <div className="section-title">
                     <span>Shape</span>
-                    <strong>Padding, corners, shadows</strong>
+                    <strong>Surface</strong>
                   </div>
                   <label className="field-block">
                     <span>Padding</span>
@@ -12910,7 +13094,7 @@ function App() {
                 <section className="inspector-section">
                   <div className="section-title">
                     <span>Canvas</span>
-                    <strong>Delivery aspect</strong>
+                    <strong>Aspect</strong>
                   </div>
                   <div className="option-pills">
                     {outputAspectOptions.map((option) => (
@@ -12932,8 +13116,8 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Framing</span>
-                    <strong>Contain or crop</strong>
+                    <span>Fit</span>
+                    <strong>Frame fit</strong>
                   </div>
                   <div className="option-pills">
                     {outputFitModeOptions.map((option) => (
@@ -12959,7 +13143,7 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Capture</p>
-                  <h2>Source and library</h2>
+                  <h2>Capture setup</h2>
                 </div>
 
                 <div className="inspector-actions">
@@ -13003,7 +13187,7 @@ function App() {
                       </strong>
                     </article>
                     <article>
-                      <span>Smart zooms</span>
+                      <span>Auto zoom</span>
                       <strong>{autoZoomDetectionOptions.find((option) => option.id === settings.capture.autoZoomMode)?.label || 'Off'}</strong>
                     </article>
                   </div>
@@ -13020,6 +13204,7 @@ function App() {
                         key={source.id}
                         type="button"
                         className={`source-row ${source.id === settings.capture.selectedSourceId ? 'active' : ''}`.trim()}
+                        aria-label={`${source.name}, ${source.kind}${source.displayId ? `, display ${source.displayId}` : ''}`}
                         onClick={() =>
                           void persistSettings({
                             capture: {
@@ -13028,12 +13213,12 @@ function App() {
                           })
                         }
                       >
-                        <img src={source.thumbnailDataUrl} alt={source.name} />
+                        <img src={source.thumbnailDataUrl} alt="" />
                         <div>
                           <strong>{source.name}</strong>
                           <span>
                             {source.kind}
-                            {source.displayId ? ` · display ${source.displayId}` : ''}
+                            {source.displayId ? ` / display ${source.displayId}` : ''}
                           </span>
                         </div>
                       </button>
@@ -13043,13 +13228,13 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Audio inputs</span>
-                    <strong>System and microphone capture</strong>
+                    <span>Audio</span>
+                    <strong>Input routing</strong>
                   </div>
                   <div className="setting-row">
                     <label>
                       <span>System audio</span>
-                      <strong>Include the selected screen or window audio when the OS exposes it.</strong>
+                          <strong>Capture source audio.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -13068,8 +13253,8 @@ function App() {
                       <span>Microphone</span>
                       <strong>
                         {settings.capture.includeMicrophone
-                          ? `Voice capture armed on ${activeMicrophoneDeviceLabel}.`
-                          : 'Capture only the screen mix until you enable a microphone.'}
+                          ? `Armed on ${activeMicrophoneDeviceLabel}.`
+                          : 'Capture a separate voice stem.'}
                       </strong>
                     </label>
                     <input
@@ -13103,17 +13288,14 @@ function App() {
                         </option>
                       ))}
                     </select>
-                    <small>
-                      Screen audio stays on the main take. The microphone is recorded as an isolated voice stem and can be
-                      cleaned with Voice Clarity during export.
-                    </small>
+                    <small>Saved as a separate voice stem.</small>
                   </label>
                 </section>
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Smart zoom detection</span>
-                    <strong>Seed zoom blocks while recording</strong>
+                    <span>Auto zoom</span>
+                    <strong>Create zoom blocks</strong>
                   </div>
                   <div className="option-pills">
                     {autoZoomDetectionOptions.map((option) => (
@@ -13146,8 +13328,8 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Clip rack</span>
-                    <strong>{project.clips.length} take(s)</strong>
+                    <span>Clips</span>
+                    <strong>{projectClipCount} clip{projectClipCount === 1 ? '' : 's'}</strong>
                   </div>
                   {project.clips.length ? (
                     <div className="clip-list">
@@ -13156,16 +13338,17 @@ function App() {
                           key={clip.id}
                           type="button"
                           className={`clip-row ${selectedClip?.id === clip.id ? 'active' : ''}`.trim()}
+                          aria-label={`${clip.label}, ${formatDuration(clip.durationSeconds)}, ${clip.captureProfile.motionPresetLabel}`}
                           onClick={() => void selectClip(clip.id)}
                         >
                           {clip.thumbnailDataUrl ? (
-                            <img src={clip.thumbnailDataUrl} alt={clip.label} />
+                            <img src={clip.thumbnailDataUrl} alt="" />
                           ) : (
                             <div className="clip-row-fallback">{clip.source.kind.toUpperCase()}</div>
                           )}
                           <div>
                             <strong>{clip.label}</strong>
-                            <span>{formatDuration(clip.durationSeconds)} · {clip.captureProfile.motionPresetLabel}</span>
+                          <span>{formatDuration(clip.durationSeconds)} / {clip.captureProfile.motionPresetLabel}</span>
                           </div>
                         </button>
                       ))}
@@ -13173,14 +13356,14 @@ function App() {
                   ) : (
                     <div className="empty-state compact">
                       <strong>No clips yet</strong>
-                      <span>Record the first take to populate the rack.</span>
+                      <span>Record the first take to begin.</span>
                     </div>
                   )}
                 </section>
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Clip inspector</span>
+                    <span>Clip</span>
                     <strong>{selectedClip ? selectedClip.label : 'No clip selected'}</strong>
                   </div>
 
@@ -13204,14 +13387,14 @@ function App() {
                           <strong>
                             {selectedClip.cursorTrack
                               ? `${selectedClip.cursorTrack.points.length} samples`
-                              : 'Preset driven'}
+                              : 'Preset guided'}
                           </strong>
                         </article>
                       </div>
 
                       <div className="field-grid">
                         <label className="field-block">
-                          <span>Trim start (seconds)</span>
+                          <span>Trim in</span>
                           <input
                             value={trimStartDraft}
                             onChange={(event) => setTrimStartDraft(event.target.value)}
@@ -13220,7 +13403,7 @@ function App() {
                         </label>
 
                         <label className="field-block">
-                          <span>Trim end (seconds)</span>
+                          <span>Trim out</span>
                           <input
                             value={trimEndDraft}
                             onChange={(event) => setTrimEndDraft(event.target.value)}
@@ -13230,7 +13413,7 @@ function App() {
                       </div>
 
                       <label className="field-block">
-                        <span>Motion treatment</span>
+                        <span>Motion</span>
                         <select
                           value={selectedClip.captureProfile.motionPresetId}
                           onChange={(event) => void updateSelectedClipCaptureProfile(event.target.value)}
@@ -13243,9 +13426,9 @@ function App() {
                         </select>
                         <small>
                           {selectedClip.cursorTrack
-                            ? `${selectedClip.cursorTrack.points.length} cursor sample(s) will steer this treatment outside any manual zoom blocks.`
+                            ? 'Using live cursor guidance.'
                             : selectedClipMotionPreset?.description ??
-                              'The current motion treatment will be applied during clip and sequence exports.'}
+                              'Drives clip and sequence framing.'}
                         </small>
                       </label>
 
@@ -13255,7 +13438,7 @@ function App() {
                           className="secondary"
                           onClick={handlePreviewCrop}
                         >
-                          Commit trim
+                          Apply trim
                         </button>
                         <button
                           type="button"
@@ -13276,7 +13459,7 @@ function App() {
                   ) : (
                     <div className="empty-state compact">
                       <strong>No clip selected</strong>
-                      <span>Record the first take to unlock trim, zoom, and export controls.</span>
+                      <span>Select a take to edit trim and motion.</span>
                     </div>
                   )}
                 </section>
@@ -13287,8 +13470,8 @@ function App() {
                     <strong>
                       {selectedClip
                         ? selectedClipFocusRegions.length
-                          ? `${selectedClipFocusRegions.length} manual block(s)`
-                          : 'Add the first manual zoom'
+                          ? `${selectedClipFocusRegions.length} manual block${selectedClipFocusRegions.length === 1 ? '' : 's'}`
+                          : 'Add the first zoom'
                         : 'Select a clip first'}
                     </strong>
                   </div>
@@ -13332,20 +13515,18 @@ function App() {
                       {selectedClipFocusRegions.length ? (
                         <>
                           <label className="field-block">
-                            <span>Active zoom block</span>
+                            <span>Active zoom</span>
                             <select
                               value={selectedFocusRegion?.id ?? ''}
                               onChange={(event) => setSelectedFocusRegionId(event.target.value)}
                             >
                               {selectedClipFocusRegions.map((region) => (
                                 <option key={region.id} value={region.id}>
-                                  {region.label} · {formatEditableSeconds(region.startSeconds)}s-{formatEditableSeconds(region.endSeconds)}s
+                                  {region.label} / {formatEditableSeconds(region.startSeconds)}s-{formatEditableSeconds(region.endSeconds)}s
                                 </option>
                               ))}
                             </select>
-                            <small>
-                              Manual zoom blocks override preset and cursor-follow motion during their active window.
-                            </small>
+                            <small>Overrides preset motion.</small>
                           </label>
 
                           {selectedFocusRegion ? (
@@ -13445,19 +13626,17 @@ function App() {
                         </>
                       ) : (
                         <div className="support-note">
-                          <strong>Manual zoom editing</strong>
-                          <span>
-                            Add a zoom block at the playhead, then tune its timing and focus target. These blocks render as blue regions on the motion lane for precise manual timing.
-                          </span>
+                          <strong>No zoom blocks yet</strong>
+                          <span>Add one at the playhead.</span>
                         </div>
                       )}
                     </>
                   ) : (
-                    <div className="empty-state compact">
-                      <strong>No clip selected</strong>
-                      <span>Choose a take from the clip rack to start adding manual zooms.</span>
-                    </div>
-                  )}
+                <div className="empty-state compact">
+                  <strong>No clip selected</strong>
+                  <span>Select a clip to add zoom blocks.</span>
+                </div>
+              )}
                 </section>
               </>
             ) : null}
@@ -13466,17 +13645,17 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Camera</p>
-                  <h2>Presenter layer</h2>
+                  <h2>Camera overlay</h2>
                 </div>
 
                 <section className="inspector-section">
                   <div className="setting-row">
                     <label>
-                      <span>Record with your camera</span>
+                      <span>Enable camera</span>
                       <strong>
                         {activeCameraSettings.enabled
-                          ? 'A separate webcam layer will be captured and composited on export.'
-                          : 'Screen-only capture. Enable this for a presenter bubble.'}
+                          ? 'Presenter take armed.'
+                          : 'Screen only.'}
                       </strong>
                     </label>
                     <input
@@ -13517,7 +13696,7 @@ function App() {
                 <section className="inspector-section">
                   <div className="section-title">
                     <span>Device</span>
-                    <strong>Choose the presenter feed</strong>
+                    <strong>Presenter feed</strong>
                   </div>
                   <label className="field-block">
                     <span>Camera source</span>
@@ -13585,7 +13764,7 @@ function App() {
                         })
                       }
                     />
-                    <small>Push the presenter bubble inward without changing its size.</small>
+                    <small>Move the overlay inward.</small>
                   </label>
                   <div className="option-pills">
                     {cameraPositionOptions.map((option) => (
@@ -13606,7 +13785,7 @@ function App() {
                   <div className="setting-row">
                     <label>
                       <span>Mirror camera</span>
-                      <strong>Flip the presenter feed horizontally for a more natural selfie preview.</strong>
+                      <strong>Mirror the feed.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -13625,7 +13804,7 @@ function App() {
                     <span>Shape</span>
                     <strong>Bubble or card</strong>
                   </div>
-                  <div className="cursor-style-grid">
+                  <div className="cursor-style-grid compact-choice-grid">
                     {cameraShapeOptions.map((option) => (
                       <button
                         key={option.id}
@@ -13692,10 +13871,8 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="support-note">
-                    <strong>What this block does now</strong>
-                    <span>
-                      New recordings can capture a separate camera take, preview it live on stage, and composite it back during clip and timeline export with anchor, inset, shape, mirror, border, and shadow controls.
-                    </span>
+                    <strong>Separate presenter take</strong>
+                    <span>Captured once, composited automatically.</span>
                   </div>
                 </section>
               </>
@@ -13705,7 +13882,7 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Cursor</p>
-                  <h2>Style and movement</h2>
+                  <h2>Pointer behavior</h2>
                 </div>
 
                 <section className="inspector-section">
@@ -13714,8 +13891,8 @@ function App() {
                       <span>Show cursor</span>
                       <strong>
                         {activeCursorSettings.showCursor
-                          ? 'Cursor accent is burned into new recordings.'
-                          : 'Only the captured source image will be preserved.'}
+                          ? 'Render styled pointer.'
+                          : 'Hide overlay pointer.'}
                       </strong>
                     </label>
                     <input
@@ -13731,20 +13908,20 @@ function App() {
 
                   <div className="metric-grid">
                     <article>
-                      <span>Telemetry</span>
+                      <span>Tracking</span>
                       <strong>{captureCursorTelemetryLabel}</strong>
                     </article>
                     <article>
-                      <span>Capture mode</span>
-                      <strong>{selectedSource?.kind === 'screen' ? 'Cursor-aware screen follow' : 'Preset-driven window mode'}</strong>
+                      <span>Mode</span>
+                      <strong>{selectedSource?.kind === 'screen' ? 'Screen follow' : 'Window preset'}</strong>
                     </article>
                   </div>
                 </section>
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Cursor size</span>
-                    <strong>Presence in the frame</strong>
+                    <span>Size</span>
+                    <strong>Pointer scale</strong>
                   </div>
                   <div className="slider-row">
                     <input
@@ -13775,10 +13952,10 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Cursor style</span>
-                    <strong>Visual language</strong>
+                    <span>Style</span>
+                    <strong>Pointer style</strong>
                   </div>
-                  <div className="cursor-style-grid">
+                  <div className="cursor-style-grid compact-choice-grid">
                     {cursorStyleOptions.map((option) => (
                       <button
                         key={option.id}
@@ -13800,8 +13977,8 @@ function App() {
                 <section className="inspector-section">
                   <div className="setting-row">
                     <label>
-                      <span>Always use pointer style</span>
-                      <strong>Keep the main arrow shape instead of following text, hand, and resize states.</strong>
+                      <span>Force arrow</span>
+                      <strong>Ignore text, hand, and resize states.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -13818,7 +13995,7 @@ function App() {
                 <section className="inspector-section">
                   <div className="section-title">
                     <span>Click effect</span>
-                    <strong>Interaction emphasis</strong>
+                    <strong>Click pulse</strong>
                   </div>
                   <div className="option-pills">
                     {cursorClickEffectOptions.map((option) => (
@@ -13841,8 +14018,8 @@ function App() {
                 <section className="inspector-section">
                   <div className="setting-row">
                     <label>
-                      <span>Cursor movement smoothing</span>
-                      <strong>Interpolate between telemetry samples for cleaner motion.</strong>
+                      <span>Smoothing</span>
+                      <strong>Smooth pointer path.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -13855,8 +14032,8 @@ function App() {
                     />
                   </div>
                   <div className="section-title compact-top">
-                    <span>Animation style</span>
-                    <strong>Response curve</strong>
+                    <span>Motion curve</span>
+                    <strong>Response feel</strong>
                   </div>
                   <div className="option-pills">
                     {cursorAnimationStyleOptions.map((option) => (
@@ -13875,10 +14052,8 @@ function App() {
                     ))}
                   </div>
                   <div className="support-note">
-                    <strong>What is live right now</strong>
-                    <span>
-                      New recordings use a styled cursor treatment directly inside the capture canvas, and screen sources now ingest real global mouse-down events for ripple highlights.
-                    </span>
+                    <strong>Shared motion engine</strong>
+                    <span>Preview and export stay aligned.</span>
                   </div>
                 </section>
               </>
@@ -13888,7 +14063,7 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Keyboard</p>
-                  <h2>Shortcut overlay</h2>
+                  <h2>Keyboard callouts</h2>
                 </div>
 
                 <section className="inspector-section">
@@ -13897,8 +14072,8 @@ function App() {
                       <span>Show keyboard shortcuts</span>
                       <strong>
                         {activeShortcutSettings.enabled
-                          ? 'Preview and export render shortcut callouts from recorded telemetry.'
-                          : 'Telemetry stays in the clip, but shortcut labels stay hidden.'}
+                          ? 'Render recorded shortcut callouts.'
+                          : 'Keep shortcut telemetry hidden.'}
                       </strong>
                     </label>
                     <input
@@ -13919,14 +14094,18 @@ function App() {
                     </article>
                     <article>
                       <span>Selected clip</span>
-                      <strong>{selectedClipKeyboardShortcuts.length ? `${selectedClipKeyboardShortcuts.length} timestamp(s)` : 'No timestamps'}</strong>
+                      <strong>
+                        {selectedClipKeyboardShortcuts.length
+                          ? `${selectedClipKeyboardShortcuts.length} timestamp${selectedClipKeyboardShortcuts.length === 1 ? '' : 's'}`
+                          : 'No timestamps'}
+                      </strong>
                     </article>
                     <article>
                       <span>Label mode</span>
                       <strong>{activeShortcutSettings.showSymbols ? 'Symbols' : 'Text labels'}</strong>
                     </article>
                     <article>
-                      <span>Overlay size</span>
+                      <span>Size</span>
                       <strong>{keyboardShortcutSizeOptions.find((option) => option.id === activeShortcutSettings.labelSize)?.label || 'Medium'}</strong>
                     </article>
                   </div>
@@ -13936,7 +14115,7 @@ function App() {
                   <div className="setting-row">
                     <label>
                       <span>Show symbols</span>
-                      <strong>Swap textual key names for symbolic labels where possible.</strong>
+                      <strong>Prefer symbolic keycaps.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -13949,7 +14128,7 @@ function App() {
                     />
                   </div>
 
-                  <div className="cursor-style-grid">
+                  <div className="cursor-style-grid compact-choice-grid">
                     {keyboardShortcutSizeOptions.map((option) => (
                       <button
                         key={option.id}
@@ -13970,11 +14149,11 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Shortcut timestamps</span>
+                    <span>Recorded shortcuts</span>
                     <strong>
                       {selectedKeyboardShortcut
-                        ? `${formatEditableSeconds(selectedKeyboardShortcut.timeSeconds)}s · ${formatKeyboardShortcutLabel(selectedKeyboardShortcut.keys, activeShortcutSettings.showSymbols)}`
-                        : 'Recorded key combinations on the selected take'}
+                        ? `${formatEditableSeconds(selectedKeyboardShortcut.timeSeconds)}s / ${formatKeyboardShortcutLabel(selectedKeyboardShortcut.keys, activeShortcutSettings.showSymbols)}`
+                        : 'Captured shortcuts'}
                     </strong>
                   </div>
 
@@ -14035,10 +14214,8 @@ function App() {
                     </>
                   ) : (
                     <div className="support-note">
-                      <strong>No keyboard telemetry on this take yet</strong>
-                      <span>
-                        Record a new screen or window take and use navigation, modifier, or special keys to seed shortcut timestamps automatically.
-                      </span>
+                      <strong>No shortcut data yet</strong>
+                      <span>Record a take to seed shortcut timestamps.</span>
                     </div>
                   )}
                 </section>
@@ -14049,7 +14226,7 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Captions</p>
-                  <h2>Transcript and timed subtitle overlay</h2>
+                  <h2>Captions</h2>
                 </div>
 
                 <section className="inspector-section">
@@ -14058,8 +14235,8 @@ function App() {
                       <span>Show captions</span>
                       <strong>
                         {activeCaptionSettings.enabled
-                          ? 'Stage preview and export render timed captions from the active transcript.'
-                          : 'Transcript data stays on the take, but stage and export captions stay hidden.'}
+                          ? 'Render timed captions.'
+                          : 'Keep transcript only.'}
                       </strong>
                     </label>
                     <input
@@ -14098,7 +14275,7 @@ function App() {
 
                   {!boot.transcription.available ? (
                     <div className="support-note">
-                      <strong>Transcript generation is not armed on this machine</strong>
+                      <strong>Transcript generation unavailable</strong>
                       <span>{boot.transcription.reason}</span>
                     </div>
                   ) : null}
@@ -14108,7 +14285,7 @@ function App() {
                   <div className="setting-row">
                     <label>
                       <span>Word highlighting</span>
-                      <strong>Use word timestamps to emphasize the active word in stage preview.</strong>
+                      <strong>Highlight the active word.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -14124,7 +14301,7 @@ function App() {
                   <div className="setting-row">
                     <label>
                       <span>Speaker labels</span>
-                      <strong>Display speaker names when a transcript line includes them.</strong>
+                      <strong>Show speaker names when available.</strong>
                     </label>
                     <input
                       type="checkbox"
@@ -14148,10 +14325,10 @@ function App() {
                       }
                       placeholder="en"
                     />
-                    <small>Optional ISO language hint for the transcription request, such as `en` or `ru`.</small>
+                    <small>ISO code, for example `en` or `ru`.</small>
                   </label>
 
-                  <div className="cursor-style-grid">
+                  <div className="cursor-style-grid compact-choice-grid">
                     {captionSizeOptions.map((option) => (
                       <button
                         key={option.id}
@@ -14172,132 +14349,137 @@ function App() {
 
                 <section className="inspector-section">
                   <div className="section-title">
-                    <span>Transcript actions</span>
+                    <span>Transcript tools</span>
                     <strong>
                       {selectedTranscriptSegment
                         ? `${formatEditableSeconds(selectedTranscriptSegment.startSeconds)}s-${formatEditableSeconds(selectedTranscriptSegment.endSeconds)}s`
                         : selectedClip
-                          ? `${selectedClipTranscriptSourceLabel} · generate, import, or inspect transcript lines on the selected take`
-                          : 'Select a clip first'}
+                          ? selectedClipTranscriptSourceLabel
+                          : 'Choose a clip'}
                     </strong>
                   </div>
 
-                  <div className="panel-actions compact">
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={() => void handleGenerateSelectedClipTranscript()}
-                      disabled={!selectedClip || isGeneratingTranscript || !boot.transcription.available}
-                    >
-                      {isGeneratingTranscript ? 'Generating...' : 'Generate transcript'}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => void handleImportSelectedClipTranscript()}
-                      disabled={!selectedClip || isImportingTranscript}
-                    >
-                      {isImportingTranscript ? 'Importing...' : 'Import SRT/VTT'}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => void handleTrimSelectedClipToTranscriptSegment()}
-                      disabled={!selectedTranscriptSegment}
-                    >
-                      Trim clip to line
-                    </button>
-                    <button
-                      type="button"
-                      className={isRecordingAudioRetake ? 'primary' : 'secondary'}
-                      onClick={() =>
-                        void (isRecordingAudioRetake
-                          ? handleStopSelectedTranscriptAudioRetake()
-                          : handleStartSelectedTranscriptAudioRetake())
-                      }
-                      disabled={
-                        (!selectedTranscriptSegment && !isRecordingAudioRetake) ||
-                        isRecording ||
-                        isStartingRecording ||
-                        selectedTranscriptRetakeLimitSeconds > 15
-                      }
-                    >
-                      {isRecordingAudioRetake
-                        ? `Stop retake ${formatTimer(audioRetakeSeconds)}`
-                        : 'Record audio retake'}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary ghost"
-                      onClick={() => void handleRemoveSelectedTranscriptAudioRetake()}
-                      disabled={!selectedTranscriptAudioRetake || isRecordingAudioRetake}
-                    >
-                      Remove retake
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() =>
-                        void (
-                          selectedTranscriptTimelineAction.mode === 'restore'
-                            ? handleRestoreSelectedTranscriptCut()
-                            : handleCutSelectedTranscriptSegmentFromTimeline()
-                        )
-                      }
-                      disabled={selectedTranscriptTimelineAction.mode === 'unavailable'}
-                    >
-                      {selectedTranscriptTimelineAction.mode === 'restore' ? 'Restore cut' : 'Cut line'}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => void handleCopyTranscriptAsText()}
-                      disabled={!selectedClipTranscriptSegments.length}
-                    >
-                      Copy as text
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => void handleCopyTranscriptAsSrt()}
-                      disabled={!selectedClipTranscriptSegments.length}
-                    >
-                      Copy as SRT
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary ghost"
-                      onClick={() => void handleClearSelectedTranscript()}
-                      disabled={!selectedClipTranscriptSegments.length}
-                    >
-                      Clear transcript
-                    </button>
+                  <div className="action-cluster">
+                    <div className="panel-actions compact">
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => void handleGenerateSelectedClipTranscript()}
+                        disabled={!selectedClip || isGeneratingTranscript || !boot.transcription.available}
+                      >
+                        {isGeneratingTranscript ? 'Generating...' : 'Generate'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void handleImportSelectedClipTranscript()}
+                        disabled={!selectedClip || isImportingTranscript}
+                      >
+                        {isImportingTranscript ? 'Importing...' : 'Import'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void handleCopyTranscriptAsText()}
+                        disabled={!selectedClipTranscriptSegments.length}
+                      >
+                        Copy TXT
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void handleCopyTranscriptAsSrt()}
+                        disabled={!selectedClipTranscriptSegments.length}
+                      >
+                        Copy SRT
+                      </button>
+                    </div>
+
+                    <div className="panel-actions compact">
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void handleTrimSelectedClipToTranscriptSegment()}
+                        disabled={!selectedTranscriptSegment}
+                      >
+                        Trim
+                      </button>
+                      <button
+                        type="button"
+                        className={isRecordingAudioRetake ? 'primary' : 'secondary'}
+                        onClick={() =>
+                          void (isRecordingAudioRetake
+                            ? handleStopSelectedTranscriptAudioRetake()
+                            : handleStartSelectedTranscriptAudioRetake())
+                        }
+                        disabled={
+                          (!selectedTranscriptSegment && !isRecordingAudioRetake) ||
+                          isRecording ||
+                          isStartingRecording ||
+                          selectedTranscriptRetakeLimitSeconds > 15
+                        }
+                      >
+                        {isRecordingAudioRetake
+                          ? `Stop retake ${formatTimer(audioRetakeSeconds)}`
+                          : 'Retake'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary ghost"
+                        onClick={() => void handleRemoveSelectedTranscriptAudioRetake()}
+                        disabled={!selectedTranscriptAudioRetake || isRecordingAudioRetake}
+                      >
+                        Remove
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() =>
+                          void (
+                            selectedTranscriptTimelineAction.mode === 'restore'
+                              ? handleRestoreSelectedTranscriptCut()
+                              : handleCutSelectedTranscriptSegmentFromTimeline()
+                          )
+                        }
+                        disabled={selectedTranscriptTimelineAction.mode === 'unavailable'}
+                      >
+                        {selectedTranscriptTimelineAction.mode === 'restore' ? 'Restore' : 'Cut'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary ghost"
+                        onClick={() => void handleClearSelectedTranscript()}
+                        disabled={!selectedClipTranscriptSegments.length}
+                      >
+                        Clear
+                      </button>
+                    </div>
                   </div>
 
                   <div className="support-note transcript-action-note">
-                    <strong>Sequence edit</strong>
+                    <strong>Cut / restore</strong>
                     <span>{selectedTranscriptTimelineAction.message}</span>
                   </div>
                   <div className="support-note transcript-action-note">
-                    <strong>Audio retake</strong>
+                    <strong>Retake</strong>
                     <span>
                       {isRecordingAudioRetake
-                        ? `Recording a replacement mic pass for this transcript line. Movion caps line-level retakes at ${formatEditableSeconds(selectedTranscriptRetakeLimitSeconds)} seconds and swaps them over the base mic stem during stage preview and export.`
+                          ? `Recording / limit ${formatEditableSeconds(selectedTranscriptRetakeLimitSeconds)}s.`
                         : selectedTranscriptAudioRetake
-                          ? `Saved retake armed for ${formatEditableSeconds(selectedTranscriptAudioRetake.startSeconds)}s-${formatEditableSeconds(selectedTranscriptAudioRetake.endSeconds)}s using ${selectedTranscriptAudioRetake.deviceLabel || 'the selected microphone'}. Preview and export will replace the base mic only on that line.`
+                          ? `Saved / ${formatEditableSeconds(selectedTranscriptAudioRetake.startSeconds)}s-${formatEditableSeconds(selectedTranscriptAudioRetake.endSeconds)}s.`
                           : selectedTranscriptSegment
                             ? selectedTranscriptRetakeLimitSeconds > 15
-                              ? 'This line is longer than 15 seconds, so it is outside the current audio-retake limit. Trim the line or use a shorter segment first.'
-                              : 'Record a new mic pass for the selected line. The existing clip audio and system audio stay intact while only the isolated mic segment is replaced.'
-                            : 'Select a transcript line first, then record a focused mic retake for that line.'}
+                              ? 'Line exceeds 15s limit.'
+                              : 'Record a retake.'
+                            : 'Select a line.'}
                     </span>
                   </div>
                   <div className="support-note transcript-action-note">
-                    <strong>Transcript source</strong>
+                    <strong>Source</strong>
                     <span>
                       {boot.transcription.available
-                        ? 'Generate timed captions from audio, or import an edited SRT/VTT file and keep using the same transcript tools.'
-                        : 'OpenAI transcription is unavailable in this runtime, but you can still import timed SRT/VTT captions and use transcript editing locally.'}
+                        ? 'Generate or import.'
+                        : 'Import SRT/VTT.'}
                     </span>
                   </div>
                 </section>
@@ -14305,37 +14487,34 @@ function App() {
                 <section className="inspector-section">
                   <div className="section-title">
                     <span>Transcript lines</span>
-                    <strong>
-                      {selectedTranscriptSegment
-                        ? formatTranscriptSegmentSummary(selectedTranscriptSegment, activeCaptionSettings.showSpeakerLabels)
-                        : selectedClipTranscript.status === 'error'
-                          ? selectedClipTranscript.error || 'Transcript generation failed'
-                          : 'Clickable transcript lines that can drive stage scrubbing and clip trims'}
-                    </strong>
-                  </div>
+                      <strong>
+                        {selectedTranscriptSegment
+                          ? formatTranscriptSegmentSummary(selectedTranscriptSegment, activeCaptionSettings.showSpeakerLabels)
+                          : selectedClipTranscript.status === 'error'
+                            ? selectedClipTranscript.error || 'Transcript generation failed'
+                            : 'Search lines'}
+                      </strong>
+                    </div>
 
                   <label className="field-block">
-                    <span>Search transcript</span>
+                    <span>Search</span>
                     <input
                       value={transcriptSearchQuery}
                       onChange={(event) => setTranscriptSearchQuery(event.target.value)}
-                      placeholder="Find a spoken phrase"
+                      placeholder="Find a phrase"
                     />
                   </label>
 
                   {selectedTranscriptSegment ? (
                     <label className="field-block">
-                      <span>Correct selected line</span>
+                      <span>Edit line</span>
                       <textarea
                         className="transcript-editor"
                         value={transcriptSegmentTextDraft}
                         onChange={(event) => setTranscriptSegmentTextDraft(event.target.value)}
                         rows={3}
-                        placeholder="Correct the text for this caption line"
+                        placeholder="Edit line"
                       />
-                      <small>
-                        This updates the stored transcript text and the caption wording used in stage preview and export.
-                      </small>
                     </label>
                   ) : null}
 
@@ -14347,7 +14526,7 @@ function App() {
                         onClick={() => void handleSaveSelectedTranscriptSegmentText()}
                         disabled={!transcriptSegmentTextDraft.trim() || transcriptSegmentTextDraft.trim() === selectedTranscriptSegment.text.trim()}
                       >
-                        Save line text
+                        Save line
                       </button>
                     </div>
                   ) : null}
@@ -14360,14 +14539,14 @@ function App() {
                           className="secondary"
                           onClick={() => void handleSetAllTranscriptSegmentsVisibility(true)}
                         >
-                          Show all
+                          Show
                         </button>
                         <button
                           type="button"
                           className="secondary ghost"
                           onClick={() => void handleSetAllTranscriptSegmentsVisibility(false)}
                         >
-                          Hide all
+                          Hide
                         </button>
                       </div>
 
@@ -14425,17 +14604,15 @@ function App() {
 
                       {!filteredSelectedTranscriptSegments.length ? (
                         <div className="support-note">
-                          <strong>No lines matched the current search</strong>
-                          <span>Clear the search field to see the full transcript again.</span>
+                          <strong>No matches</strong>
+                          <span>Clear search.</span>
                         </div>
                       ) : null}
                     </>
                   ) : (
                     <div className="support-note">
-                      <strong>No transcript on this take yet</strong>
-                      <span>
-                        Generate a transcript to unlock captions, line-by-line seeking, and transcript-driven clip trims.
-                      </span>
+                      <strong>No transcript yet</strong>
+                      <span>Generate one to edit lines.</span>
                     </div>
                   )}
                 </section>
@@ -14446,26 +14623,7 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Audio</p>
-                  <h2>Music beds, voice clarity and ducking</h2>
-                </div>
-
-                <div className="inspector-actions">
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={handleImportMusicBed}
-                    disabled={isImportingMusicBed}
-                  >
-                    {isImportingMusicBed ? 'Importing...' : 'Import music bed'}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={handleRemoveMusicBed}
-                    disabled={!activeMusicBed || isRemovingMusicBed}
-                  >
-                    {isRemovingMusicBed ? 'Removing...' : 'Remove selected bed'}
-                  </button>
+                  <h2>Mix and cleanup</h2>
                 </div>
 
                 <section className="inspector-section">
@@ -14496,6 +14654,279 @@ function App() {
                     </article>
                   </div>
                 </section>
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Music beds</span>
+                    <strong>{musicBeds.length ? `${enabledMusicBedCount} live in sequence` : 'Import the first bed'}</strong>
+                  </div>
+
+                  <div className="inspector-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={handleImportMusicBed}
+                      disabled={isImportingMusicBed}
+                    >
+                      {isImportingMusicBed ? 'Importing...' : musicBeds.length ? 'Add bed' : 'Import bed'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={handleRemoveMusicBed}
+                      disabled={!activeMusicBed || isRemovingMusicBed}
+                    >
+                      {isRemovingMusicBed ? 'Removing...' : 'Remove bed'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary ghost"
+                      onClick={() => void window.forkApi.shell.showInFolder(activeMusicBed?.filePath || boot.paths.audioRoot)}
+                    >
+                      Open folder
+                    </button>
+                  </div>
+
+                  {musicBeds.length ? (
+                    <div className="audio-bed-list">
+                      {musicBeds.map((bed) => (
+                        <button
+                          key={bed.id}
+                          type="button"
+                          className={`audio-bed-row ${bed.id === activeMusicBed?.id ? 'active' : ''} ${bed.enabled ? '' : 'muted'}`.trim()}
+                          onClick={() => void handleSelectMusicBed(bed.id)}
+                        >
+                          <strong>{bed.label}</strong>
+                          <span>{bed.enabled ? 'Live' : 'Muted'} / {bed.routingMode === 'duck' ? 'Ducked' : 'Bypass'} / {formatGainDb(bed.gainDb)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state compact">
+                      <strong>No beds loaded</strong>
+                      <span>Import a music layer to build the sequence mix.</span>
+                    </div>
+                  )}
+                </section>
+
+                {activeMusicBed ? (
+                  <section className="inspector-section">
+                    <div className="section-title">
+                      <span>Selected bed</span>
+                      <strong>{activeMusicBed.sourceName}</strong>
+                    </div>
+
+                    <div className="metric-grid">
+                      <article>
+                        <span>Source</span>
+                        <strong>{formatDuration(activeMusicBed.durationSeconds)}</strong>
+                      </article>
+                      <article>
+                        <span>Routing</span>
+                        <strong>{activeMusicBed.routingMode === 'duck' ? 'Duck' : 'Bypass'}</strong>
+                      </article>
+                      <article>
+                        <span>Status</span>
+                        <strong>{musicBedEnabledDraft ? 'Live' : 'Muted'}</strong>
+                      </article>
+                      <article>
+                        <span>Loop</span>
+                        <strong>{musicBedLoopDraft ? 'On' : 'Off'}</strong>
+                      </article>
+                    </div>
+
+                    <div className="field-grid">
+                      <label className="field-block">
+                        <span>Bed gain</span>
+                        <input
+                          type="range"
+                          min="-24"
+                          max="12"
+                          step="0.5"
+                          value={musicBedGainDraft}
+                          onChange={(event) => setMusicBedGainDraft(Number(event.target.value))}
+                        />
+                        <small>{formatGainDb(musicBedGainDraft)}</small>
+                      </label>
+
+                      <label className="field-block">
+                        <span>Routing</span>
+                        <select
+                          value={musicBedRoutingModeDraft}
+                          onChange={(event) => setMusicBedRoutingModeDraft(event.target.value as TimelineMusicBed['routingMode'])}
+                        >
+                          {bedRoutingOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <small>{bedRoutingOptions.find((option) => option.id === musicBedRoutingModeDraft)?.detail}</small>
+                      </label>
+                    </div>
+
+                    <div className="field-grid">
+                      <label className="toggle-row audio-toggle">
+                        <span>Include in mix</span>
+                        <input
+                          type="checkbox"
+                          checked={musicBedEnabledDraft}
+                          onChange={(event) => setMusicBedEnabledDraft(event.target.checked)}
+                        />
+                      </label>
+
+                      <label className="toggle-row audio-toggle">
+                        <span>Loop bed</span>
+                        <input
+                          type="checkbox"
+                          checked={musicBedLoopDraft}
+                          onChange={(event) => setMusicBedLoopDraft(event.target.checked)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="field-grid">
+                      <label className="field-block">
+                        <span>Fade in</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="6"
+                          step="0.05"
+                          value={musicBedFadeInDraft}
+                          onChange={(event) => setMusicBedFadeInDraft(Number(event.target.value))}
+                        />
+                        <small>{formatEditableSeconds(musicBedFadeInDraft)}s</small>
+                      </label>
+
+                      <label className="field-block">
+                        <span>Fade out</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="6"
+                          step="0.05"
+                          value={musicBedFadeOutDraft}
+                          onChange={(event) => setMusicBedFadeOutDraft(Number(event.target.value))}
+                        />
+                        <small>{formatEditableSeconds(musicBedFadeOutDraft)}s</small>
+                      </label>
+                    </div>
+                  </section>
+                ) : null}
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Voice clarity</span>
+                    <strong>{voiceClarityEnabledDraft ? 'Cleanup on' : 'Cleanup off'}</strong>
+                  </div>
+
+                  <div className="setting-row">
+                    <label>
+                      <span>Enable cleanup</span>
+                      <strong>Clean the isolated mic path during preview and export.</strong>
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={voiceClarityEnabledDraft}
+                      onChange={(event) => setVoiceClarityEnabledDraft(event.target.checked)}
+                    />
+                  </div>
+
+                  <label className="field-block">
+                    <span>Profile</span>
+                    <select
+                      value={voiceClarityProfileDraft}
+                      onChange={(event) => setVoiceClarityProfileDraft(event.target.value as VoiceClarityProfile)}
+                      disabled={!voiceClarityEnabledDraft}
+                    >
+                      {voiceClarityProfileOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <small>
+                      {voiceClarityProfileOptions.find((option) => option.id === voiceClarityProfileDraft)?.detail ||
+                        'Clean up the isolated microphone stem during preview and export.'}
+                    </small>
+                  </label>
+                </section>
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Ducking</span>
+                    <strong>{duckingEnabledDraft ? 'Voice priority on' : 'Voice priority off'}</strong>
+                  </div>
+
+                  <div className="setting-row">
+                    <label>
+                      <span>Enable ducking</span>
+                      <strong>Push beds under narration when the voice path is active.</strong>
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={duckingEnabledDraft}
+                      onChange={(event) => setDuckingEnabledDraft(event.target.checked)}
+                      disabled={!activeMusicBed}
+                    />
+                  </div>
+
+                  <div className="field-grid">
+                    <label className="field-block">
+                      <span>Amount</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="18"
+                        step="1"
+                        value={duckingReductionDraft}
+                        onChange={(event) => setDuckingReductionDraft(Number(event.target.value))}
+                        disabled={!activeMusicBed || !duckingEnabledDraft}
+                      />
+                      <small>{duckingReductionDraft} dB</small>
+                    </label>
+
+                    <label className="field-block">
+                      <span>Attack</span>
+                      <input
+                        type="range"
+                        min="20"
+                        max="600"
+                        step="10"
+                        value={duckingAttackDraft}
+                        onChange={(event) => setDuckingAttackDraft(Number(event.target.value))}
+                        disabled={!activeMusicBed || !duckingEnabledDraft}
+                      />
+                      <small>{duckingAttackDraft} ms</small>
+                    </label>
+
+                    <label className="field-block">
+                      <span>Release</span>
+                      <input
+                        type="range"
+                        min="80"
+                        max="2000"
+                        step="20"
+                        value={duckingReleaseDraft}
+                        onChange={(event) => setDuckingReleaseDraft(Number(event.target.value))}
+                        disabled={!activeMusicBed || !duckingEnabledDraft}
+                      />
+                      <small>{duckingReleaseDraft} ms</small>
+                    </label>
+                  </div>
+
+                  <div className="support-note">
+                    <strong>Sequence mix behavior</strong>
+                    <span>
+                      {project.output.format === 'gif'
+                        ? 'GIF exports stay silent.'
+                        : enabledMusicBedCount
+                          ? `${enabledMusicBedCount} bed${enabledMusicBedCount === 1 ? '' : 's'} will render into the sequence mix.`
+                          : 'Sequence export uses clip and mic audio only.'}
+                    </span>
+                  </div>
+                </section>
               </>
             ) : null}
 
@@ -14503,65 +14934,54 @@ function App() {
               <>
                 <div className="inspector-header">
                   <p>Export</p>
-                  <h2>Delivery and render</h2>
+                  <h2>Render output</h2>
                 </div>
 
                 <section className="inspector-section">
                   <div className="engine-status" data-ready={boot.ffmpeg.available}>
                     <strong>{boot.ffmpeg.available ? 'FFmpeg ready' : 'FFmpeg missing'}</strong>
                     <span>
-                      {boot.ffmpeg.version || 'Waiting for ffmpeg.exe detection'}
-                      {activeOutputFormat ? ` · ${activeOutputFormat.label}` : ''}
+                      {boot.ffmpeg.version || 'Waiting for FFmpeg'}
+                      {activeOutputFormat ? ` / ${activeOutputFormat.label}` : ''}
                     </span>
                     {boot.ffmpeg.available ? (
                       <small>
-                        {boot.ffmpeg.managed ? 'Managed local toolchain' : 'Direct external binary'}
-                        {boot.ffmpeg.preferredVideoEncoder ? ` · ${boot.ffmpeg.preferredVideoEncoder}` : ''}
-                        {boot.ffmpeg.supportsAdvancedCompositing ? ' · advanced compositor' : ''}
+                        {boot.ffmpeg.managed ? 'Managed runtime' : 'External binary'}
+                        {boot.ffmpeg.preferredVideoEncoder ? ` / ${boot.ffmpeg.preferredVideoEncoder}` : ''}
+                        {boot.ffmpeg.supportsAdvancedCompositing ? ' / compositor ready' : ''}
                       </small>
                     ) : null}
                   </div>
                 </section>
 
-                {selectedClip ? (
-                  <section className="inspector-section">
-                    <div className="section-title">
-                      <span>Clip export</span>
-                      <strong>{selectedClip.label}</strong>
-                    </div>
-                    <label className="field-block">
-                      <span>Clip export name</span>
-                      <input
-                        value={exportNameDraft}
-                        onChange={(event) => setExportNameDraft(event.target.value)}
-                        placeholder="clip-export"
-                      />
-                    </label>
-                    <div className="inspector-actions">
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={analyzeSelectedClipAudio}
-                        disabled={isAnalyzingSelectedClipAudio}
-                      >
-                        {isAnalyzingSelectedClipAudio ? 'Analyzing...' : 'Analyze audio lane'}
-                      </button>
-                      <button
-                        type="button"
-                        className="primary"
-                        onClick={handleExportSelectedClip}
-                        disabled={isExportingClip || !boot.ffmpeg.available}
-                      >
-                        {isExportingClip ? 'Rendering clip...' : `Export clip as ${project.output.format.toUpperCase()}`}
-                      </button>
-                    </div>
-                  </section>
-                ) : null}
-
                 <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Delivery profile</span>
+                    <strong>{activeOutputFormat?.label ?? project.output.format.toUpperCase()}</strong>
+                  </div>
+
+                  <div className="metric-grid">
+                    <article>
+                      <span>Format</span>
+                      <strong>{activeOutputFormat?.label ?? project.output.format.toUpperCase()}</strong>
+                    </article>
+                    <article>
+                      <span>Aspect</span>
+                      <strong>{outputAspectOptions.find((option) => option.id === project.output.aspectPreset)?.label ?? project.output.aspectPreset}</strong>
+                    </article>
+                    <article>
+                      <span>Codec</span>
+                      <strong>{project.output.format === 'gif' ? 'GIF' : project.output.videoCodec === 'libx265' ? 'H.265' : 'H.264'}</strong>
+                    </article>
+                    <article>
+                      <span>Quality</span>
+                      <strong>{project.output.format === 'gif' ? `${project.output.gifFps} fps` : `CRF ${project.output.crf}`}</strong>
+                    </article>
+                  </div>
+
                   <div className="field-grid">
                     <label className="field-block">
-                      <span>Output format</span>
+                      <span>Format</span>
                       <select
                         value={project.output.format}
                         onChange={(event) =>
@@ -14576,10 +14996,11 @@ function App() {
                           </option>
                         ))}
                       </select>
+                      <small>{activeOutputFormat?.detail}</small>
                     </label>
 
                     <label className="field-block">
-                      <span>Canvas</span>
+                      <span>Aspect</span>
                       <select
                         value={project.output.aspectPreset}
                         onChange={(event) =>
@@ -14597,23 +15018,158 @@ function App() {
                     </label>
                   </div>
 
+                  <div className="field-grid">
+                    <label className="field-block">
+                      <span>Fit</span>
+                      <select
+                        value={project.output.fitMode}
+                        onChange={(event) =>
+                          void handleProjectOutputChange({
+                            fitMode: event.target.value as LocalProject['output']['fitMode'],
+                          })
+                        }
+                      >
+                        {outputFitModeOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field-block">
+                      <span>Speed</span>
+                      <select
+                        value={project.output.preset}
+                        onChange={(event) =>
+                          void handleProjectOutputChange({
+                            preset: event.target.value,
+                          })
+                        }
+                      >
+                        <option value="medium">Medium</option>
+                        <option value="slow">Slow</option>
+                        <option value="slower">Slower</option>
+                      </select>
+                      <small>Slower means better compression.</small>
+                    </label>
+                  </div>
+
+                  <div className="field-grid">
+                    <label className="field-block">
+                      <span>Codec</span>
+                      <select
+                        value={project.output.videoCodec}
+                        onChange={(event) =>
+                          void handleProjectOutputChange({
+                            videoCodec: event.target.value,
+                          })
+                        }
+                        disabled={project.output.format === 'gif'}
+                      >
+                        <option value="libx264">H.264 / libx264</option>
+                        <option value="libx265">H.265 / libx265</option>
+                      </select>
+                      <small>{project.output.format === 'gif' ? 'GIF ignores the final codec.' : 'H.264 is safest. H.265 is smaller.'}</small>
+                    </label>
+
+                    <label className="field-block">
+                      <span>Quality</span>
+                      <input
+                        type="range"
+                        min={project.output.format === 'gif' ? '10' : '14'}
+                        max={project.output.format === 'gif' ? '24' : '28'}
+                        step="1"
+                        value={project.output.format === 'gif' ? project.output.gifFps : project.output.crf}
+                        onChange={(event) =>
+                          void handleProjectOutputChange(
+                            project.output.format === 'gif'
+                              ? { gifFps: Number(event.target.value) }
+                              : { crf: Number(event.target.value) },
+                          )
+                        }
+                      />
+                      <small>{project.output.format === 'gif' ? `${project.output.gifFps} fps` : `CRF ${project.output.crf}`}</small>
+                    </label>
+                  </div>
+                </section>
+
+                {selectedClip ? (
+                  <section className="inspector-section">
+                    <div className="section-title">
+                      <span>Clip export</span>
+                      <strong>{selectedClip.label}</strong>
+                    </div>
+
+                    <div className="inspector-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={analyzeSelectedClipAudio}
+                        disabled={isAnalyzingSelectedClipAudio}
+                      >
+                        {isAnalyzingSelectedClipAudio ? 'Analyzing...' : 'Analyze audio'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary ghost"
+                        onClick={() => void window.forkApi.shell.showInFolder(selectedClip.lastExportPath || boot.paths.exportsRoot)}
+                      >
+                        Open latest clip
+                      </button>
+                    </div>
+
+                    <label className="field-block">
+                      <span>Clip filename</span>
+                      <input
+                        value={exportNameDraft}
+                        onChange={(event) => setExportNameDraft(event.target.value)}
+                        placeholder="clip-export"
+                      />
+                    </label>
+                    <div className="inspector-actions">
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={handleExportSelectedClip}
+                        disabled={isExportingClip || !boot.ffmpeg.available}
+                      >
+                        {isExportingClip ? 'Rendering clip...' : 'Export clip'}
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Sequence export</span>
+                    <strong>{activeOutputFormat?.label ?? project.output.format.toUpperCase()}</strong>
+                  </div>
+
                   <label className="field-block">
-                    <span>Sequence export name</span>
+                    <span>Sequence filename</span>
                     <input
                       value={timelineExportNameDraft}
                       onChange={(event) => setTimelineExportNameDraft(event.target.value)}
-                      placeholder="timeline-export"
+                      placeholder="sequence-export"
                     />
                   </label>
 
                   <div className="inspector-actions">
                     <button
                       type="button"
+                      className="secondary"
+                      onClick={() => void window.forkApi.shell.showInFolder(project.timeline.lastExportPath || boot.paths.exportsRoot)}
+                    >
+                      Open latest sequence
+                    </button>
+                    <button
+                      type="button"
                       className="primary"
                       onClick={handleExportTimeline}
                       disabled={isExportingTimeline || !boot.ffmpeg.available || !enabledTimelineItemCount}
                     >
-                      {isExportingTimeline ? 'Rendering sequence...' : `Export timeline as ${project.output.format.toUpperCase()}`}
+                      {isExportingTimeline ? 'Rendering sequence...' : 'Export sequence'}
                     </button>
                   </div>
                 </section>
@@ -14623,17 +15179,56 @@ function App() {
             {activeStudioSection === 'projects' ? (
               <>
                 <div className="inspector-header">
-                  <p>Projects</p>
-                  <h2>Library and autosave</h2>
+                  <p>Workspaces</p>
+                  <h2>Library</h2>
                 </div>
 
                 <section className="inspector-section">
+                  <div className="metric-grid">
+                    <article>
+                      <span>Library</span>
+                      <strong>{projectLibrary.length} saved</strong>
+                    </article>
+                    <article>
+                      <span>Autosave</span>
+                      <strong>{project.recovery.autosaveEnabled ? 'On' : 'Off'}</strong>
+                    </article>
+                    <article>
+                      <span>Last saved</span>
+                      <strong>{isSavingProject ? 'Saving...' : formatDateTime(project.recovery.lastSavedAt)}</strong>
+                    </article>
+                    <article>
+                      <span>Active clip</span>
+                      <strong>{selectedClip?.label ?? 'None'}</strong>
+                    </article>
+                  </div>
+
+                  <div className="setting-row">
+                    <label>
+                      <span>Autosave</span>
+                      <strong>Save while editing.</strong>
+                    </label>
+                    <input
+                      type="checkbox"
+                      checked={project.recovery.autosaveEnabled}
+                      onChange={(event) => {
+                        void handleRecoveryToggle(event.target.checked)
+                      }}
+                    />
+                  </div>
+                </section>
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Workspace</span>
+                    <strong>New or branch</strong>
+                  </div>
                   <label className="field-block">
-                    <span>New project name</span>
+                    <span>Workspace name</span>
                     <input
                       value={projectSeedTitleDraft}
                       onChange={(event) => setProjectSeedTitleDraft(event.target.value)}
-                      placeholder="Optional title for the next workspace"
+                      placeholder="Optional title"
                     />
                   </label>
                   <div className="inspector-actions">
@@ -14643,7 +15238,7 @@ function App() {
                       onClick={handleCreateProject}
                       disabled={projectWorkspaceLocked}
                     >
-                      {projectWorkspaceLocked ? 'Workspace locked...' : 'Create new project'}
+                      {projectWorkspaceLocked ? 'Workspace locked...' : 'Create workspace'}
                     </button>
                     <button
                       type="button"
@@ -14651,8 +15246,123 @@ function App() {
                       onClick={() => void handleDuplicateProject(project.id)}
                       disabled={projectWorkspaceLocked}
                     >
-                      Branch active
+                      Branch current
                     </button>
+                  </div>
+                </section>
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Library</span>
+                    <strong>{activeProjectSummary?.title ?? 'Saved workspaces'}</strong>
+                  </div>
+
+                  {projectLibrary.length ? (
+                    <div className="project-stack">
+                      {projectLibrary.map((projectSummary) => (
+                        <article
+                          key={projectSummary.id}
+                          className={`project-card ${projectSummary.isActive ? 'active' : ''}`.trim()}
+                        >
+                          <button
+                            type="button"
+                            className="project-card-main"
+                            aria-label={`${projectSummary.title}, ${projectSummary.isActive ? 'active workspace' : 'saved workspace'}, ${projectSummary.clipCount} clip${projectSummary.clipCount === 1 ? '' : 's'}, ${formatDuration(projectSummary.totalTimelineDuration)}`}
+                            onClick={() => void handleOpenProject(projectSummary.id)}
+                            disabled={projectWorkspaceLocked || projectSummary.isActive}
+                          >
+                            <div className="project-card-media">
+                              {projectSummary.coverThumbnailDataUrl ? (
+                                <img
+                                  src={projectSummary.coverThumbnailDataUrl}
+                                  alt=""
+                                />
+                              ) : (
+                                <div className="project-card-fallback">
+                                  <span>{projectSummary.isActive ? 'Active workspace' : 'Ready to open'}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="project-card-body">
+                              <div className="project-card-heading">
+                                <div className="project-card-title">
+                                  <strong>{projectSummary.title}</strong>
+                                  <small>{projectSummary.isActive ? 'Current workspace' : 'Ready to open'}</small>
+                                </div>
+                                <span>{projectSummary.isActive ? 'Active' : 'Standby'}</span>
+                              </div>
+                              {projectSummary.brief ? <p>{projectSummary.brief}</p> : null}
+                              <div className="project-card-meta">
+                                <span>{projectSummary.clipCount} clip{projectSummary.clipCount === 1 ? '' : 's'}</span>
+                                <span>{projectSummary.enabledTimelineItemCount} live</span>
+                                <span>{projectSummary.timelineItemCount} item{projectSummary.timelineItemCount === 1 ? '' : 's'}</span>
+                                <span>{formatDuration(projectSummary.totalTimelineDuration)}</span>
+                              </div>
+                            </div>
+                          </button>
+
+                          <div className="project-card-actions">
+                            <button
+                              type="button"
+                              className="secondary ghost"
+                              onClick={() => void handleDuplicateProject(projectSummary.id)}
+                              disabled={projectWorkspaceLocked}
+                            >
+                              Branch
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary ghost"
+                              onClick={() => void handleDeleteProject(projectSummary)}
+                              disabled={projectWorkspaceLocked || projectLibrary.length === 1}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state compact">
+                      <strong>No workspaces yet</strong>
+                      <span>Create one to branch edits.</span>
+                    </div>
+                  )}
+                </section>
+
+                <section className="inspector-section">
+                  <div className="section-title">
+                    <span>Legacy import</span>
+                    <strong>{importSummary?.detected ? 'Migration available' : 'Legacy scan'}</strong>
+                  </div>
+
+                  <div className="inspector-actions">
+                    <button type="button" className="secondary" onClick={scanImportState} disabled={isScanningImport}>
+                      {isScanningImport ? 'Scanning...' : 'Scan setup'}
+                    </button>
+                    <button type="button" className="secondary ghost" onClick={importLegacyState} disabled={isImporting}>
+                      {isImporting ? 'Importing...' : 'Import data'}
+                    </button>
+                  </div>
+
+                  <div className="metric-grid">
+                    <article>
+                      <span>Detected</span>
+                      <strong>{importSummary?.detected ? 'Yes' : 'No'}</strong>
+                    </article>
+                    <article>
+                      <span>Version</span>
+                      <strong>{importSummary?.sourceVersion || 'Unknown'}</strong>
+                    </article>
+                    <article>
+                      <span>Projects</span>
+                      <strong>{importSummary?.projectCount ?? 0}</strong>
+                    </article>
+                    <article>
+                      <span>Presets</span>
+                      <strong>{importSummary?.presetCount ?? 0}</strong>
+                    </article>
                   </div>
                 </section>
               </>
@@ -14660,7 +15370,19 @@ function App() {
           </div>
         </aside>
 
-        <section className="studio-stage">
+          <section className="studio-stage">
+            <div className="studio-preview-desk">
+              <div className="studio-desk-heading">
+                <div>
+                  <span>Preview</span>
+                  <h2>Canvas</h2>
+                </div>
+                <div className="studio-desk-badges">
+                  <span>{previewDeskPrimaryBadge}</span>
+                  <span>{previewDeskSecondaryBadge}</span>
+                </div>
+              </div>
+
           <div className="stage-toolbar">
             <div className="toolbar-left">
               <div className="preset-pill">
@@ -14688,21 +15410,31 @@ function App() {
             </div>
 
             <div className="toolbar-center">
+              <div className="toolbar-sequence-pill">
+                <span>Sequence</span>
+                <strong>{selectedTimelineOrderLabel}</strong>
+              </div>
               <button
                 type="button"
-                className="chrome-button"
+                className="chrome-button chrome-button-labeled"
                 onClick={() => selectedTimelineItem && void moveTimelineItem(selectedTimelineItem.id, -1)}
                 disabled={!selectedTimelineItem}
+                aria-label="Move selected clip earlier"
+                title="Move selected clip earlier"
               >
                 <StudioIcon name="undo" />
+                <span>Earlier</span>
               </button>
               <button
                 type="button"
-                className="chrome-button"
+                className="chrome-button chrome-button-labeled"
                 onClick={() => selectedTimelineItem && void moveTimelineItem(selectedTimelineItem.id, 1)}
                 disabled={!selectedTimelineItem}
+                aria-label="Move selected clip later"
+                title="Move selected clip later"
               >
                 <StudioIcon name="redo" />
+                <span>Later</span>
               </button>
             </div>
 
@@ -14713,7 +15445,7 @@ function App() {
                 onClick={() => void window.forkApi.shell.showInFolder(lastExportPath || boot.paths.exportsRoot)}
               >
                 <StudioIcon name="folder" />
-                <span>Quick Share</span>
+                <span>Open exports</span>
               </button>
               <button
                 type="button"
@@ -14735,24 +15467,31 @@ function App() {
               >
                 {enabledTimelineItemCount
                   ? isExportingTimeline
-                    ? 'Exporting...'
-                    : 'Export'
+                    ? 'Exporting sequence...'
+                    : 'Export sequence'
                   : isExportingClip
                     ? 'Exporting clip...'
-                    : 'Export'}
+                    : 'Export clip'}
               </button>
             </div>
           </div>
 
           <div className="stage-status">
-            <span>{statusLine}</span>
-            <strong>
-              {lastExportPath
-                ? `Last export: ${lastExportPath}`
-                : lastSavedPath
-                  ? `Last capture: ${formatBytes(lastSavedSize)} at ${lastSavedPath}`
-                  : 'No local artifact yet'}
-            </strong>
+            <article className="stage-status-card emphasis">
+              <span>State</span>
+              <strong>{stageStateLabel}</strong>
+              <small>{stageStateDetail}</small>
+            </article>
+            <article className="stage-status-card">
+              <span>{stageArtifactCaption}</span>
+              <strong>{stageArtifactDetail}</strong>
+              <small>{deliveryStatusLabel}</small>
+            </article>
+            <article className={`stage-status-card ${boot.ffmpeg.available ? 'ready' : 'warning'}`.trim()}>
+              <span>Engine</span>
+              <strong>{stageEngineLabel}</strong>
+              <small>{stageEngineDetail}</small>
+            </article>
           </div>
 
           {errorMessage ? <p className="error-banner stage-banner">{errorMessage}</p> : null}
@@ -14788,6 +15527,7 @@ function App() {
                     ref={stagePlaybackRef}
                     className={`stage-playback-feed ${!isRecording && previewClipContext?.fileUrl ? 'visible' : ''}`.trim()}
                     autoPlay={false}
+                    preload="auto"
                     style={stageMediaFitStyle}
                     playsInline
                   />
@@ -14848,6 +15588,7 @@ function App() {
                     ref={stagePlaybackCameraRef}
                     className={`stage-camera-feed ${previewCameraVisible ? 'visible' : ''}`.trim()}
                     autoPlay={false}
+                    preload="auto"
                     style={stageCameraFeedStyle}
                     playsInline
                   />
@@ -14905,24 +15646,24 @@ function App() {
               <div className="stage-chip top-left">
                 <span>{isRecording ? 'Live' : 'Preview'}</span>
                 <strong>{previewMediaLabel}</strong>
-                <small>{previewSequenceSummary ? `${previewSequenceSummary} · ${previewMediaDetail}` : previewMediaDetail}</small>
+                <small>{previewSequenceSummary ? `${previewSequenceSummary} / ${previewStageSummaryDetail}` : previewStageSummaryDetail}</small>
               </div>
 
               <div className="stage-chip top-right">
-                <span>Cursor telemetry</span>
+                <span>Cursor</span>
                 <strong>{captureCursorTelemetryLabel}</strong>
                 <small>
                   {isRecording
-                    ? `Keyboard ${captureKeyboardTelemetryLabel}`
+                    ? captureKeyboardTelemetryLabel
                     : boot.ffmpeg.available
-                      ? 'Render engine online'
-                      : 'FFmpeg unavailable'}
+                      ? 'Engine ready'
+                      : 'Export offline'}
                 </small>
               </div>
 
               {!isRecording ? (
                 <div className="stage-chip bottom-left audio-route">
-                  <span>Audio audition</span>
+                  <span>Audio</span>
                   <strong>{previewAudioStageSummary.label}</strong>
                   <small>{previewAudioStageSummary.detail}</small>
                 </div>
@@ -14930,7 +15671,7 @@ function App() {
 
               {!isRecording ? (
                 <div className="stage-chip bottom-right shortcut-route">
-                  <span>Keyboard shortcuts</span>
+                  <span>Keys</span>
                   <strong>{previewKeyboardShortcutSummary.label}</strong>
                   <small>{previewKeyboardShortcutSummary.detail}</small>
                 </div>
@@ -14940,13 +15681,17 @@ function App() {
 
           <div className="stage-transport">
             <div className="transport-meta">
-              <StudioIcon name="capture" />
+              <div className="transport-meta-copy">
+                <span>Playhead</span>
+                <strong>{previewSequenceSummary || previewMediaLabel}</strong>
+              </div>
               <input
                 type="range"
                 min="0"
                 max={String(previewTimelineDuration)}
                 step="0.01"
                 value={timelinePlayheadSeconds}
+                aria-label="Stage playhead"
                 onChange={(event) => {
                   setIsStagePlaying(false)
                   setTimelinePlayheadSeconds(Number(event.target.value))
@@ -14955,179 +15700,234 @@ function App() {
             </div>
 
             <div className="transport-center">
-              <span>{formatTimer(Math.round(timelinePlayheadSeconds))}</span>
-              <button type="button" className="chrome-button" onClick={() => nudgePlayhead(-5)}>
+              <span className="transport-timecode current">{formatTimer(Math.round(timelinePlayheadSeconds))}</span>
+              <button
+                type="button"
+                className="chrome-button chrome-button-labeled transport-step"
+                onClick={() => nudgePlayhead(-5)}
+                aria-label="Jump back 5 seconds"
+                title="Jump back 5 seconds"
+              >
                 <StudioIcon name="back" />
+                <span>-5s</span>
               </button>
-              <button type="button" className="play-button" onClick={handleToggleStagePlayback}>
+              <button type="button" className="play-button play-button-labeled" onClick={handleToggleStagePlayback}>
                 <StudioIcon name={isStagePlaying ? 'pause' : 'play'} />
+                <span>{stagePlayActionLabel}</span>
               </button>
-              <button type="button" className="chrome-button" onClick={() => nudgePlayhead(5)}>
+              <button
+                type="button"
+                className="chrome-button chrome-button-labeled transport-step"
+                onClick={() => nudgePlayhead(5)}
+                aria-label="Jump forward 5 seconds"
+                title="Jump forward 5 seconds"
+              >
                 <StudioIcon name="forward" />
+                <span>+5s</span>
               </button>
-              <span>{formatTimer(Math.round(previewTimelineDuration))}</span>
+              <span className="transport-timecode total">{formatTimer(Math.round(previewTimelineDuration))}</span>
             </div>
 
             <div className="transport-actions">
+              <div className="transport-actions-copy">
+                <span>{selectedTimelineItem ? 'Trim' : 'Framing'}</span>
+                <strong>{selectedTimelineItem ? 'Commit or reset the selected shot' : 'Tune framing before export'}</strong>
+              </div>
               <button type="button" className="secondary" onClick={() => void handlePreviewCrop()}>
-                Crop
+                {stagePrimaryActionLabel}
               </button>
               <button type="button" className="secondary" onClick={() => void handlePreviewAuto()}>
-                Auto
+                {stageSecondaryActionLabel}
               </button>
             </div>
           </div>
 
-          <section className="studio-timeline">
-            <div className="timeline-ruler modern">
-              {previewRulerMarks.map((mark) => (
-                <span
-                  key={`${mark.label}-${mark.leftPercent}`}
-                  style={{ left: `${mark.leftPercent}%` }}
-                >
-                  {mark.label}
-                </span>
-              ))}
             </div>
 
-            <div className="timeline-band clip-band">
-              <div
-                className="timeline-playhead-marker"
-                style={{
-                  left: `${previewPlayheadRatio * 100}%`,
-                }}
-              />
-              {timelineSequence.length ? (
-                timelineSequence.map((segment) => {
-                  const leftPercent = previewTimelineDuration
-                    ? (segment.startSeconds / previewTimelineDuration) * 100
-                    : 0
-                  const widthPercent = previewTimelineDuration
-                    ? Math.max((segment.bounds.durationSeconds / previewTimelineDuration) * 100, 7)
-                    : 7
-
-                  return (
-                    <button
-                      key={segment.item.id}
-                      type="button"
-                      className={`timeline-block clip ${segment.item.id === selectedTimelineItem?.id ? 'active' : ''} ${segment.item.enabled ? '' : 'muted'}`.trim()}
-                      style={{
-                        left: `${leftPercent}%`,
-                        width: `${widthPercent}%`,
-                      }}
-                      onClick={() => void selectTimelineItem(segment.item.id)}
-                    >
-                      <span>{segment.item.label}</span>
-                      <strong>{formatDuration(segment.bounds.durationSeconds)}</strong>
-                    </button>
-                  )
-                })
-              ) : selectedClip ? (
-                <button
-                  type="button"
-                  className="timeline-block clip active fallback"
-                  style={{ left: '0%', width: '100%' }}
-                  onClick={() => void addClipToTimeline(selectedClip)}
-                >
-                  <span>{selectedClip.label}</span>
-                  <strong>{formatDuration(selectedClip.durationSeconds)}</strong>
-                </button>
-              ) : null}
-            </div>
-
-            <div className="timeline-band motion-band" onClick={(event) => void handleMotionBandCreate(event)}>
-              <div
-                className="timeline-playhead-marker"
-                style={{
-                  left: `${previewPlayheadRatio * 100}%`,
-                }}
-              />
-              {timelineSequence.length ? (
-                timelineSequence.map((segment) => {
-                  const leftPercent = previewTimelineDuration
-                    ? (segment.startSeconds / previewTimelineDuration) * 100
-                    : 0
-                  const widthPercent = previewTimelineDuration
-                    ? Math.max((segment.bounds.durationSeconds / previewTimelineDuration) * 100, 7)
-                    : 7
-                  const presetLabel =
-                    segment.clip?.captureProfile.motionPresetLabel ||
-                    activeMotionPreset?.label ||
-                    'Motion'
-
-                  return (
-                    <button
-                      key={`${segment.item.id}-motion`}
-                      type="button"
-                      className={`timeline-block motion ${segment.item.id === selectedTimelineItem?.id ? 'active' : ''}`.trim()}
-                      style={{
-                        left: `${leftPercent}%`,
-                        width: `${widthPercent}%`,
-                      }}
-                      onClick={() => void selectTimelineItem(segment.item.id)}
-                    >
-                      <span>{presetLabel}</span>
-                      <strong>
-                        {segment.clip?.cursorTrack
-                          ? `${segment.clip.cursorTrack.points.length} samples`
-                          : 'Preset driven'}
-                      </strong>
-                    </button>
-                  )
-                })
-              ) : selectedClip ? (
-                <button
-                  type="button"
-                  className="timeline-block motion active fallback"
-                  style={{ left: '22%', width: '42%' }}
-                  onClick={() => void addClipToTimeline(selectedClip)}
-                >
-                  <span>{selectedClip.captureProfile.motionPresetLabel}</span>
-                  <strong>
-                    {selectedClip.cursorTrack
-                      ? `${selectedClip.cursorTrack.points.length} samples`
-                      : 'Preset driven'}
-                  </strong>
-                </button>
-              ) : null}
-              {timelineFocusBlocks.map((block) => (
-                <div
-                  key={block.key}
-                  className={`timeline-focus-block ${block.region.id === selectedFocusRegion?.id ? 'active' : ''}`.trim()}
-                  style={{
-                    left: `${block.leftPercent}%`,
-                    width: `${block.widthPercent}%`,
-                  }}
-                  onClick={() => {
-                    setSelectedFocusRegionId(block.region.id)
-                    if (block.itemId && block.itemId !== selectedTimelineItem?.id) {
-                      void selectTimelineItem(block.itemId)
-                    }
-                  }}
-                  onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'move')}
-                >
-                  <button
-                    type="button"
-                    className="timeline-focus-handle start"
-                    onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'resize-start')}
-                    onClick={(event) => event.stopPropagation()}
-                    aria-label={`Resize start for ${block.region.label}`}
-                  />
-                  <span>{block.region.label}</span>
-                  <strong>Q {block.region.zoom.toFixed(1)}x</strong>
-                  <button
-                    type="button"
-                    className="timeline-focus-handle end"
-                    onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'resize-end')}
-                    onClick={(event) => event.stopPropagation()}
-                    aria-label={`Resize end for ${block.region.label}`}
-                  />
+            <section className="studio-timeline-desk">
+              <div className="studio-desk-heading">
+                <div>
+                  <span>Timeline</span>
+                  <h2>Sequence</h2>
                 </div>
-              ))}
+                <div className="studio-desk-badges">
+                  <span>{timelineLiveItemsLabel}</span>
+                  <span>{timelineDurationBadge}</span>
+                  <span>{previewDeskSecondaryBadge}</span>
+                </div>
+              </div>
+
+          <section className="studio-timeline">
+            <div className="timeline-ruler-shell">
+              <div className="timeline-lane-header ruler">
+                <span>Time</span>
+                <strong>{timelineDurationBadge}</strong>
+              </div>
+              <div className="timeline-ruler modern">
+                {previewRulerMarks.map((mark) => (
+                  <span
+                    key={`${mark.label}-${mark.leftPercent}`}
+                    style={{ left: `${mark.leftPercent}%` }}
+                  >
+                    {mark.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="timeline-lane">
+              <div className="timeline-lane-header">
+                <span>Clips</span>
+                <strong>{clipLaneLabel}</strong>
+              </div>
+              <div className="timeline-band clip-band">
+                <div
+                  className="timeline-playhead-marker"
+                  style={{
+                    left: `${previewPlayheadRatio * 100}%`,
+                  }}
+                />
+                {timelineSequence.length ? (
+                  timelineSequence.map((segment) => {
+                    const leftPercent = previewTimelineDuration
+                      ? (segment.startSeconds / previewTimelineDuration) * 100
+                      : 0
+                    const widthPercent = previewTimelineDuration
+                      ? Math.max((segment.bounds.durationSeconds / previewTimelineDuration) * 100, 7)
+                      : 7
+
+                    return (
+                      <button
+                        key={segment.item.id}
+                        type="button"
+                        className={`timeline-block clip ${segment.item.id === selectedTimelineItem?.id ? 'active' : ''} ${segment.item.enabled ? '' : 'muted'}`.trim()}
+                        style={{
+                          left: `${leftPercent}%`,
+                          width: `${widthPercent}%`,
+                        }}
+                        onClick={() => void selectTimelineItem(segment.item.id)}
+                      >
+                        <span>{segment.item.label}</span>
+                        <strong>{formatDuration(segment.bounds.durationSeconds)}</strong>
+                      </button>
+                    )
+                  })
+                ) : selectedClip ? (
+                  <button
+                    type="button"
+                    className="timeline-block clip active fallback"
+                    style={{ left: '0%', width: '100%' }}
+                    onClick={() => void addClipToTimeline(selectedClip)}
+                  >
+                    <span>{selectedClip.label}</span>
+                    <strong>{formatDuration(selectedClip.durationSeconds)}</strong>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="timeline-lane">
+              <div className="timeline-lane-header">
+                <span>Motion</span>
+                <strong>{motionLaneLabel}</strong>
+              </div>
+              <div className="timeline-band motion-band" onClick={(event) => void handleMotionBandCreate(event)}>
+                <div
+                  className="timeline-playhead-marker"
+                  style={{
+                    left: `${previewPlayheadRatio * 100}%`,
+                  }}
+                />
+                {timelineSequence.length ? (
+                  timelineSequence.map((segment) => {
+                    const leftPercent = previewTimelineDuration
+                      ? (segment.startSeconds / previewTimelineDuration) * 100
+                      : 0
+                    const widthPercent = previewTimelineDuration
+                      ? Math.max((segment.bounds.durationSeconds / previewTimelineDuration) * 100, 7)
+                      : 7
+                    const presetLabel =
+                      segment.clip?.captureProfile.motionPresetLabel ||
+                      activeMotionPreset?.label ||
+                      'Motion'
+
+                    return (
+                      <button
+                        key={`${segment.item.id}-motion`}
+                        type="button"
+                        className={`timeline-block motion ${segment.item.id === selectedTimelineItem?.id ? 'active' : ''}`.trim()}
+                        style={{
+                          left: `${leftPercent}%`,
+                          width: `${widthPercent}%`,
+                        }}
+                        onClick={() => void selectTimelineItem(segment.item.id)}
+                      >
+                        <span>{presetLabel}</span>
+                        <strong>
+                          {segment.clip?.cursorTrack
+                            ? `${segment.clip.cursorTrack.points.length} samples`
+                            : 'Preset guided'}
+                        </strong>
+                      </button>
+                    )
+                  })
+                ) : selectedClip ? (
+                  <button
+                    type="button"
+                    className="timeline-block motion active fallback"
+                    style={{ left: '22%', width: '42%' }}
+                    onClick={() => void addClipToTimeline(selectedClip)}
+                  >
+                    <span>{selectedClip.captureProfile.motionPresetLabel}</span>
+                    <strong>
+                      {selectedClip.cursorTrack
+                        ? `${selectedClip.cursorTrack.points.length} samples`
+                        : 'Preset guided'}
+                    </strong>
+                  </button>
+                ) : null}
+                {timelineFocusBlocks.map((block) => (
+                  <div
+                    key={block.key}
+                    className={`timeline-focus-block ${block.region.id === selectedFocusRegion?.id ? 'active' : ''}`.trim()}
+                    style={{
+                      left: `${block.leftPercent}%`,
+                      width: `${block.widthPercent}%`,
+                    }}
+                    onClick={() => {
+                      setSelectedFocusRegionId(block.region.id)
+                      if (block.itemId && block.itemId !== selectedTimelineItem?.id) {
+                        void selectTimelineItem(block.itemId)
+                      }
+                    }}
+                    onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'move')}
+                  >
+                    <button
+                      type="button"
+                      className="timeline-focus-handle start"
+                      onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'resize-start')}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`Resize start for ${block.region.label}`}
+                    />
+                    <span>{block.region.label}</span>
+                    <strong>Q {block.region.zoom.toFixed(1)}x</strong>
+                    <button
+                      type="button"
+                      className="timeline-focus-handle end"
+                      onMouseDown={(event) => beginTimelineFocusRegionDrag(event, block, 'resize-end')}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`Resize end for ${block.region.label}`}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
-        </section>
+            </section>
+          </section>
+        </div>
       </section>
+    </section>
     </main>
   )
 }

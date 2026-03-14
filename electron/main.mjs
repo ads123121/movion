@@ -1,8 +1,9 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, protocol, screen, session, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { appendFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   normalizeFocusRegions as normalizeFocusRegionsShared,
@@ -52,6 +53,20 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
+const LOCAL_MEDIA_PROTOCOL = 'movion-media'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: LOCAL_MEDIA_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+])
 
 function resolveBundledHelperPath(fileName) {
   if (!app.isPackaged) {
@@ -131,6 +146,164 @@ let projectMutationQueue = Promise.resolve()
 let mainWindowRef = null
 
 const OPENAI_TRANSCRIPTION_MAX_BYTES = 25 * 1024 * 1024
+
+function resolveLocalMediaPathFromRequest(requestUrl) {
+  const parsed = new URL(requestUrl)
+  if (parsed.protocol !== `${LOCAL_MEDIA_PROTOCOL}:` || parsed.host !== 'local') {
+    return ''
+  }
+
+  const requestedPath = parsed.searchParams.get('path') || ''
+  if (!requestedPath) {
+    return ''
+  }
+
+  const normalizedPath = path.normalize(requestedPath)
+  return path.isAbsolute(normalizedPath) ? normalizedPath : ''
+}
+
+function getLocalMediaContentType(targetPath) {
+  switch (path.extname(targetPath).toLowerCase()) {
+    case '.mp4':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mov':
+      return 'video/quicktime'
+    case '.m4v':
+      return 'video/x-m4v'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.wav':
+      return 'audio/wav'
+    case '.m4a':
+      return 'audio/mp4'
+    case '.aac':
+      return 'audio/aac'
+    case '.ogg':
+      return 'audio/ogg'
+    case '.flac':
+      return 'audio/flac'
+    case '.png':
+      return 'image/png'
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.gif':
+      return 'image/gif'
+    case '.webp':
+      return 'image/webp'
+    case '.svg':
+      return 'image/svg+xml'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
+function parseLocalMediaRange(rangeHeader, totalBytes) {
+  if (!rangeHeader || !rangeHeader.startsWith('bytes=')) {
+    return null
+  }
+
+  const [startPartRaw, endPartRaw] = rangeHeader.slice(6).split('-', 2)
+  const startPart = startPartRaw?.trim() ?? ''
+  const endPart = endPartRaw?.trim() ?? ''
+
+  if (!startPart && !endPart) {
+    return 'invalid'
+  }
+
+  let start = 0
+  let end = totalBytes - 1
+
+  if (!startPart) {
+    const suffixLength = Number.parseInt(endPart, 10)
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+      return 'invalid'
+    }
+
+    start = Math.max(0, totalBytes - suffixLength)
+  } else {
+    start = Number.parseInt(startPart, 10)
+    if (!Number.isFinite(start) || start < 0) {
+      return 'invalid'
+    }
+  }
+
+  if (endPart) {
+    end = Number.parseInt(endPart, 10)
+    if (!Number.isFinite(end) || end < start) {
+      return 'invalid'
+    }
+  }
+
+  if (start >= totalBytes) {
+    return 'invalid'
+  }
+
+  end = Math.min(end, totalBytes - 1)
+
+  return { start, end }
+}
+
+async function createLocalMediaResponse(targetPath, rangeHeader) {
+  const targetStat = await stat(targetPath)
+  if (!targetStat.isFile()) {
+    return new Response('Media file not found', { status: 404 })
+  }
+
+  const totalBytes = targetStat.size
+  const contentType = getLocalMediaContentType(targetPath)
+  const baseHeaders = {
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+    'Content-Type': contentType,
+  }
+
+  if (totalBytes <= 0) {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        ...baseHeaders,
+        'Content-Length': '0',
+      },
+    })
+  }
+
+  const parsedRange = parseLocalMediaRange(rangeHeader, totalBytes)
+  if (parsedRange === 'invalid') {
+    return new Response('Invalid range', {
+      status: 416,
+      headers: {
+        ...baseHeaders,
+        'Content-Range': `bytes */${totalBytes}`,
+      },
+    })
+  }
+
+  if (parsedRange) {
+    const { start, end } = parsedRange
+    const stream = createReadStream(targetPath, { start, end })
+
+    return new Response(Readable.toWeb(stream), {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        'Content-Length': String(end - start + 1),
+        'Content-Range': `bytes ${start}-${end}/${totalBytes}`,
+      },
+    })
+  }
+
+  const stream = createReadStream(targetPath)
+  return new Response(Readable.toWeb(stream), {
+    status: 200,
+    headers: {
+      ...baseHeaders,
+      'Content-Length': String(totalBytes),
+    },
+  })
+}
 
 const qualityProfiles = [
   {
@@ -8258,6 +8431,25 @@ function createWindow() {
 app.whenReady().then(async () => {
   await ensureForkDirs()
   await writeRuntimeLog('app ready')
+
+  session.defaultSession.protocol.handle(LOCAL_MEDIA_PROTOCOL, async (request) => {
+    try {
+      const targetPath = resolveLocalMediaPathFromRequest(request.url)
+
+      if (!targetPath) {
+        return new Response('Invalid media path', { status: 400 })
+      }
+
+      if (!existsSync(targetPath)) {
+        return new Response('Media file not found', { status: 404 })
+      }
+
+      return createLocalMediaResponse(targetPath, request.headers.get('range'))
+    } catch (error) {
+      await writeRuntimeLog(`local media protocol failed url=${request.url} error=${error?.stack ?? error}`)
+      return new Response('Failed to load media', { status: 500 })
+    }
+  })
 
   process.on('uncaughtException', (error) => {
     void writeRuntimeLog(`uncaughtException ${error?.stack ?? error}`)
