@@ -125,6 +125,7 @@ type ElectronDesktopMediaTrackConstraints = MediaTrackConstraints & {
 const CURSOR_APPEARANCE_RASTER_SCALE = 12
 const CURSOR_APPEARANCE_RASTER_MIN_SIZE = 256
 const CURSOR_APPEARANCE_RASTER_MAX_SIZE = 1024
+const UI_DATE_LOCALE = 'en-US'
 
 const formatBytes = (value: number) => {
   if (value < 1024) {
@@ -175,7 +176,7 @@ const formatDateTime = (value: string) => {
     return 'Not synced yet'
   }
 
-  return new Intl.DateTimeFormat('ru-RU', {
+  return new Intl.DateTimeFormat(UI_DATE_LOCALE, {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value))
