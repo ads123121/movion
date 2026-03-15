@@ -19,6 +19,10 @@ export type CursorVisualProjectionOptions = {
   includeTimeSeconds?: boolean
 }
 
+export type CursorAnalysisSamplingOptions = {
+  rebaseTimeToStart?: boolean
+}
+
 export type ProjectedCursorVisualPoint = {
   timeSeconds?: number
   x: number
@@ -73,6 +77,17 @@ export function projectInterpolatedCursorVisualPoint<T extends CursorVisualPoint
   },
   options?: CursorVisualProjectionOptions,
 ): ProjectedCursorVisualPoint
+
+export function sampleCursorAnalysisRange<T extends CursorVisualPointLike>(
+  points: T[],
+  startSeconds: number,
+  endSeconds: number,
+  options?: CursorAnalysisSamplingOptions,
+): Array<{
+  timeSeconds: number
+  x: number
+  y: number
+}>
 
 export function getCursorPointAtTime<T extends TimedCursorPointLike, TResult>(
   points: T[],

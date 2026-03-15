@@ -63,6 +63,7 @@ import {
   getCursorPointAtTime as getCursorPointAtTimeShared,
   projectDiscreteCursorVisualPoint as projectDiscreteCursorVisualPointShared,
   projectInterpolatedCursorVisualPoint as projectInterpolatedCursorVisualPointShared,
+  sampleCursorAnalysisRange as sampleCursorAnalysisRangeShared,
 } from './shared/cursorPath.js'
 import {
   clampCursorClickEffectStrength,
@@ -73,7 +74,6 @@ import {
   LIQUID_GLASS_CURSOR_CLICK_EFFECT_DATA_URL,
 } from './shared/cursorClickEffect.js'
 import { resolveCursorScaleMetrics } from './shared/cursorScale.js'
-import { sampleCursorTrackRange as sampleCursorTrackRangeShared } from './shared/cursorSampling.js'
 import {
   compactCursorTrackPoints as compactCursorTrackPointsShared,
   normalizeCursorTrack as normalizeCursorTrackShared,
@@ -894,7 +894,7 @@ const CURSOR_KIND_TRANSITION_SECONDS = 0.09
 function getCursorApproachMetrics(points: CursorTrackPoint[], targetTimeSeconds: number) {
   return getCursorApproachMetricsShared(points, targetTimeSeconds, {
     lookbackSeconds: AUTO_FOCUS_APPROACH_LOOKBACK_SECONDS,
-    sampleRange: sampleCursorTrackRange,
+    sampleRange: sampleCursorAnalysisRangeShared,
   })
 }
 
@@ -923,30 +923,6 @@ function getCursorPointAtTime(
       projectInterpolatedCursorVisualPointShared(context, {
         includeTimeSeconds: false,
       }),
-  })
-}
-
-function sampleCursorTrackRange(
-  points: CursorTrackPoint[],
-  startSeconds: number,
-  endSeconds: number,
-): Array<{ timeSeconds: number; x: number; y: number }> {
-  return sampleCursorTrackRangeShared(points, startSeconds, endSeconds, {
-    getPointAtTime: (sourcePoints, targetTimeSeconds) => {
-      const point = getCursorPointAtTime(sourcePoints, targetTimeSeconds, true, 'gentle')
-
-      return point
-        ? {
-            timeSeconds: targetTimeSeconds,
-            ...point,
-          }
-        : null
-    },
-    projectPoint: (point, sampledTimeSeconds) => ({
-      timeSeconds: sampledTimeSeconds,
-      x: point.x,
-      y: point.y,
-    }),
   })
 }
 
@@ -3175,21 +3151,6 @@ function App() {
       (project?.timeline.exports.length ?? 0),
     [project],
   )
-  const lastArtifactName = useMemo(() => {
-    const artifactPath = lastExportPath || lastSavedPath
-
-    if (!artifactPath) {
-      return 'No local artifact'
-    }
-
-    const parts = artifactPath.split(/[\\/]/).filter(Boolean)
-    return parts[parts.length - 1] || artifactPath
-  }, [lastExportPath, lastSavedPath])
-  const deliveryStatusLabel = lastExportPath
-    ? 'Latest export'
-    : lastSavedPath
-      ? 'Latest capture'
-      : 'Nothing saved'
 
   const activeProjectSummary = useMemo(
     () => projectLibrary.find((item) => item.isActive) ?? projectLibrary[0],
@@ -10465,23 +10426,19 @@ function App() {
   ]
 
   const activeRailItem = railItems.find((item) => item.id === activeStudioSection) ?? railItems[0]
-  const selectedClipFocusRegionCount = selectedClip?.focusRegions?.length ?? 0
   const projectClipCount = project?.clips.length ?? 0
   const projectMetaLabel = `${projectClipCount} clip${projectClipCount === 1 ? '' : 's'} / ${formatDuration(totalClipDuration)}${enabledTimelineItemCount ? ` / ${enabledTimelineItemCount} live` : ''}`
   const activeClipLabel = selectedClip?.label ?? 'No clip selected'
   const activeClipMeta = selectedClip
     ? `${formatDuration(selectedClip.durationSeconds)} / ${selectedTimelineItem ? 'In sequence' : 'Clip only'}`
     : 'Load or select a take'
-  const motionSummaryLabel = selectedClipFocusRegionCount
-    ? `${selectedClipFocusRegionCount} zoom block${selectedClipFocusRegionCount === 1 ? '' : 's'}`
-    : 'No zoom blocks'
-  const motionSupportLabel = selectedClip?.cursorTrack?.points?.length
-    ? 'Tracked'
-    : selectedSource
-      ? 'Guided'
-      : 'Manual'
   const previewDeskPrimaryBadge = selectedClip?.label ?? previewMediaLabel
   const previewDeskSecondaryBadge = selectedClipMotionPreset?.label ?? activeMotionPreset?.label ?? 'Motion ready'
+  const previewDeskTertiaryBadge = lastExportPath
+    ? 'Export ready'
+    : boot?.ffmpeg.available
+      ? `${activeOutputFormat?.label ?? project?.output.format?.toUpperCase() ?? 'MP4'} ready`
+      : 'FFmpeg needed'
   const timelineLiveItemsLabel = `${enabledTimelineItemCount} live item${enabledTimelineItemCount === 1 ? '' : 's'}`
   const selectedTimelineOrderLabel = selectedTimelineSegment
     ? `Shot ${selectedTimelineSegment.index + 1} of ${Math.max(timelineSequence.length, 1)}`
@@ -10505,21 +10462,6 @@ function App() {
       : selectedSource
         ? 'Capture ready'
         : 'Choose source'
-  const stageStateDetail = isRecording
-    ? 'Capture in progress.'
-    : selectedClip
-      ? selectedTimelineItem
-        ? 'Sequence loaded.'
-        : 'Clip loaded.'
-      : selectedSource
-        ? 'Ready to record.'
-        : 'Pick a source.'
-  const stageArtifactCaption = lastExportPath ? 'Last export' : lastSavedPath ? 'Last capture' : 'Artifact'
-  const stageArtifactDetail = lastExportPath || lastSavedPath ? lastArtifactName : 'Nothing saved yet'
-  const stageEngineLabel = boot?.ffmpeg.available ? 'Ready' : 'Needed'
-  const stageEngineDetail = boot?.ffmpeg.available
-    ? `${activeOutputFormat?.label ?? project?.output.format?.toUpperCase() ?? 'MP4'} export ready.`
-    : 'Install FFmpeg to export.'
 
   const backgroundModes: Array<{
     id: BackgroundMode
@@ -12761,10 +12703,6 @@ function App() {
 
         <div className="studio-header-right">
           <div className="studio-header-statuses" aria-label="Studio status">
-            <span className="studio-header-badge">
-              <strong>Motion</strong>
-              <small>{activeMotionPreset?.label ?? 'Ready'}</small>
-            </span>
             <span className={`studio-header-badge runtime ${boot.ffmpeg.available ? 'ready' : 'warning'}`.trim()}>
               <strong>Engine</strong>
               <small>{boot.ffmpeg.available ? 'Ready' : 'Needs FFmpeg'}</small>
@@ -12777,14 +12715,6 @@ function App() {
           >
             <StudioIcon name="folder" />
             <span>Exports</span>
-          </button>
-          <button
-            type="button"
-            className="chrome-button"
-            onClick={() => void refreshSources()}
-            aria-label="Refresh sources"
-          >
-            <StudioIcon name="spark" />
           </button>
         </div>
       </header>
@@ -12839,14 +12769,9 @@ function App() {
               <small>{activeClipMeta}</small>
             </article>
             <article className="studio-hero-card meta">
-              <span>Motion</span>
-              <strong>{activeMotionPreset?.label ?? 'Motion ready'}</strong>
-              <small>{motionSummaryLabel} / {motionSupportLabel}</small>
-            </article>
-            <article className="studio-hero-card meta">
-              <span>Delivery</span>
-              <strong>{activeOutputFormat?.label ?? project.output.format.toUpperCase()}</strong>
-              <small>{deliveryStatusLabel} / {lastArtifactName}</small>
+              <span>Workspace</span>
+              <strong>{activeRailItem.label}</strong>
+              <small>{activeRailItem.description} / {stageStateLabel}</small>
             </article>
           </div>
 
@@ -15377,11 +15302,12 @@ function App() {
                   <span>Preview</span>
                   <h2>Canvas</h2>
                 </div>
-                <div className="studio-desk-badges">
-                  <span>{previewDeskPrimaryBadge}</span>
-                  <span>{previewDeskSecondaryBadge}</span>
-                </div>
+              <div className="studio-desk-badges">
+                <span>{previewDeskPrimaryBadge}</span>
+                <span>{previewDeskSecondaryBadge}</span>
+                <span>{previewDeskTertiaryBadge}</span>
               </div>
+            </div>
 
           <div className="stage-toolbar">
             <div className="toolbar-left">
@@ -15441,14 +15367,6 @@ function App() {
             <div className="toolbar-right">
               <button
                 type="button"
-                className="secondary toolbar-share"
-                onClick={() => void window.forkApi.shell.showInFolder(lastExportPath || boot.paths.exportsRoot)}
-              >
-                <StudioIcon name="folder" />
-                <span>Open exports</span>
-              </button>
-              <button
-                type="button"
                 className="primary"
                 onClick={() => {
                   if (enabledTimelineItemCount) {
@@ -15474,24 +15392,6 @@ function App() {
                     : 'Export clip'}
               </button>
             </div>
-          </div>
-
-          <div className="stage-status">
-            <article className="stage-status-card emphasis">
-              <span>State</span>
-              <strong>{stageStateLabel}</strong>
-              <small>{stageStateDetail}</small>
-            </article>
-            <article className="stage-status-card">
-              <span>{stageArtifactCaption}</span>
-              <strong>{stageArtifactDetail}</strong>
-              <small>{deliveryStatusLabel}</small>
-            </article>
-            <article className={`stage-status-card ${boot.ffmpeg.available ? 'ready' : 'warning'}`.trim()}>
-              <span>Engine</span>
-              <strong>{stageEngineLabel}</strong>
-              <small>{stageEngineDetail}</small>
-            </article>
           </div>
 
           {errorMessage ? <p className="error-banner stage-banner">{errorMessage}</p> : null}

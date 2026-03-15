@@ -12,9 +12,11 @@ import {
   normalizeCursorVisualKind,
   normalizeCursorVisualState,
 } from './cursorVisuals.js'
+import { sampleCursorTrackRange as sampleCursorTrackRangeShared } from './cursorSampling.js'
 
 const clampUnit = (value) => clampNumber(value, 0, 1)
 const lerpNumber = (left, right, progress) => left + (right - left) * progress
+const FOCUS_MOTION_CURSOR_ANALYSIS_STYLE = 'gentle'
 
 export function findCursorPointFloorIndex(points, targetTime) {
   if (!Array.isArray(points) || !points.length) {
@@ -299,6 +301,30 @@ export function projectInterpolatedCursorVisualPoint(
     timeSeconds: targetTime,
     ...projectedPoint,
   }
+}
+
+export function sampleCursorAnalysisRange(points, startSeconds, endSeconds, { rebaseTimeToStart = false } = {}) {
+  return sampleCursorTrackRangeShared(points, startSeconds, endSeconds, {
+    getPointAtTime: (sourcePoints, targetTimeSeconds) =>
+      getCursorPointAtTime(sourcePoints, targetTimeSeconds, {
+        smoothingEnabled: true,
+        animationStyle: FOCUS_MOTION_CURSOR_ANALYSIS_STYLE,
+        projectDiscretePoint: (point, targetTime) =>
+          projectDiscreteCursorVisualPoint(point, targetTime, {
+            includeTimeSeconds: true,
+          }),
+        projectInterpolatedPoint: (context) =>
+          projectInterpolatedCursorVisualPoint(context, {
+            includeTimeSeconds: true,
+          }),
+      }),
+    rebaseTimeToStart,
+    projectPoint: (point, sampledTimeSeconds) => ({
+      timeSeconds: sampledTimeSeconds,
+      x: point.x,
+      y: point.y,
+    }),
+  })
 }
 
 export function getCursorPointAtTime(points, timeSeconds, options = {}) {

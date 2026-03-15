@@ -28,6 +28,7 @@ import {
   getCursorPointAtTime as getCursorPointAtTimeShared,
   projectDiscreteCursorVisualPoint as projectDiscreteCursorVisualPointShared,
   projectInterpolatedCursorVisualPoint as projectInterpolatedCursorVisualPointShared,
+  sampleCursorAnalysisRange as sampleCursorAnalysisRangeShared,
 } from '../src/shared/cursorPath.js'
 import {
   clampCursorClickEffectStrength,
@@ -5724,8 +5725,7 @@ function getFocusRegionSettleLeadSeconds(region, enterDurationSeconds, cursorTra
 function getCursorApproachMetrics(points, targetTimeSeconds) {
   return getCursorApproachMetricsShared(points, targetTimeSeconds, {
     lookbackSeconds: AUTO_FOCUS_APPROACH_LOOKBACK_SECONDS,
-    sampleRange: (cursorPoints, startSeconds, endSeconds) =>
-      sampleCursorTrackRange({ points: cursorPoints }, startSeconds, endSeconds),
+    sampleRange: sampleCursorAnalysisRangeShared,
   })
 }
 
@@ -5919,7 +5919,9 @@ function buildFocusRegionMotionFilter({
   }
 
   const trimmedCursorPoints = cursorTrack?.points?.length
-    ? sampleCursorTrackRange(cursorTrack, trimStartSeconds, trimStartSeconds + durationSeconds)
+    ? sampleCursorAnalysisRangeShared(cursorTrack.points, trimStartSeconds, trimStartSeconds + durationSeconds, {
+        rebaseTimeToStart: true,
+      })
     : []
   const motionSegments = buildFocusMotionSegments(
     relevantRegions,
@@ -8376,9 +8378,9 @@ function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
-    minWidth: 1220,
-    minHeight: 760,
-    backgroundColor: '#0f1319',
+    minWidth: 420,
+    minHeight: 680,
+    backgroundColor: '#fcfaf5',
     autoHideMenuBar: true,
     title: 'Movion',
     webPreferences: {
